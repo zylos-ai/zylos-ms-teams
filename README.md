@@ -59,7 +59,7 @@ Config file: `~/zylos/components/teams/config.json`
 In Azure Bot Registration, set the messaging endpoint to:
 
 ```
-https://<your-domain>/msteams/api/messages
+https://<your-domain>/teams/api/messages
 ```
 
 ## Access Control

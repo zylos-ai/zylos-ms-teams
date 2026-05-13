@@ -39,13 +39,13 @@ config:
       description: "Azure Bot Registration App Password (client secret)"
       sensitive: true
 
-next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/msteams/api/messages. 4) Start the service (pm2 restart zylos-teams)."
+next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/teams/api/messages. 4) Start the service (pm2 restart zylos-teams)."
 
 http_routes:
-  - path: /msteams/api/messages
+  - path: /teams/api/messages
     type: reverse_proxy
     target: localhost:3978
-    strip_prefix: /msteams
+    strip_prefix: /teams
 
 dependencies:
   - comm-bridge
@@ -124,7 +124,7 @@ Get these from your Azure Bot Registration:
 
 In the Azure Bot Registration settings, set the messaging endpoint to:
 ```
-https://<your-domain>/msteams/api/messages
+https://<your-domain>/teams/api/messages
 ```
 
 The path is defined by `http_routes` in SKILL.md.
