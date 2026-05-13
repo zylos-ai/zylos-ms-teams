@@ -7,8 +7,8 @@
  * - lastAccessed timestamp for LRU ordering
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/teams');

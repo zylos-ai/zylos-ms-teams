@@ -11,8 +11,8 @@
  * Note: Service restart is handled by Claude after this hook.
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/teams');

@@ -8,11 +8,11 @@
 
 import dotenv from 'dotenv';
 import express from 'express';
-import http from 'http';
-import crypto from 'crypto';
-import { execFile } from 'child_process';
-import fs from 'fs';
-import path from 'path';
+import http from 'node:http';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
