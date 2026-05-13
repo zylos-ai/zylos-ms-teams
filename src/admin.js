@@ -6,7 +6,7 @@
  * Usage: node admin.js <command> [args]
  */
 
-import { loadConfig, saveConfig } from './lib/config.js';
+import { loadConfig, saveConfig, getCredentials } from './lib/config.js';
 
 const VALID_GROUP_POLICIES = new Set(['disabled', 'allowlist', 'open']);
 
@@ -309,6 +309,18 @@ const commands = {
     }
   },
 
+  'graph-status': () => {
+    const creds = getCredentials();
+    const hasGraph = !!(creds.appId && creds.appPassword && creds.tenantId);
+    console.log(`Graph API: ${hasGraph ? 'enabled' : 'disabled'}`);
+    console.log(`  App ID: ${creds.appId ? 'configured' : 'MISSING'}`);
+    console.log(`  App Password: ${creds.appPassword ? 'configured' : 'MISSING'}`);
+    console.log(`  Tenant ID: ${creds.tenantId ? creds.tenantId : 'MISSING (required for Graph)'}`);
+    if (!hasGraph) {
+      console.log('\nTo enable Graph API, add MSTEAMS_TENANT_ID to ~/zylos/.env');
+    }
+  },
+
   'help': () => {
     console.log(`
 zylos-teams admin CLI
@@ -337,6 +349,9 @@ Commands:
   remove-dm-allow <aad_object_id>     Remove user from dmAllowFrom
 
   show-owner                          Show current owner
+
+  Graph API:
+  graph-status                        Show Graph API configuration status
 
 Permission flow:
   Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom

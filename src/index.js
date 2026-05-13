@@ -23,6 +23,7 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, downloadHostedContent } from './lib/graph.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -53,6 +54,41 @@ function isDuplicate(activityId) {
 const dedupCleanupInterval = setInterval(() => {
   messageDeduper.sweepExpired();
 }, MESSAGE_DEDUP_TTL_MS);
+
+// In-memory group context history
+const chatHistories = new Map();
+
+function recordHistoryEntry(chatId, entry) {
+  const key = String(chatId);
+  if (!chatHistories.has(key)) chatHistories.set(key, []);
+  const history = chatHistories.get(key);
+
+  if (entry.message_id && history.some(h => h.message_id === entry.message_id)) return;
+
+  history.push(entry);
+
+  const maxEntries = (config?.message?.context_messages || 10) * 2;
+  if (history.length > maxEntries) {
+    history.splice(0, history.length - maxEntries);
+  }
+}
+
+function getInMemoryContext(chatId, currentMessageId, limit) {
+  const key = String(chatId);
+  const history = chatHistories.get(key);
+  if (!history || history.length === 0) return [];
+
+  return history
+    .filter(h => h.message_id !== currentMessageId)
+    .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+    .slice(-limit);
+}
+
+function formatContextBlock(messages) {
+  if (!messages || messages.length === 0) return '';
+  const lines = messages.map(m => `[${escapeXml(m.user_name || m.user_id)}]: ${escapeXml(m.text)}`);
+  return `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
+}
 
 // Load configuration
 let config = getConfig();
@@ -280,14 +316,16 @@ function escapeXml(text) {
 /**
  * Format message for C4 using XML-structured tags.
  */
-function formatMessage(type, userName, text, { groupName, quotedReply } = {}) {
+function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock } = {}) {
   const prefix = type === 'dm'
     ? '[Teams DM]'
     : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
   const safeUserName = escapeXml(userName);
   const safeText = escapeXml(text);
 
-  let content = `${prefix} ${safeUserName} said: <current-message>\n${safeText}\n</current-message>`;
+  let content = `${prefix} ${safeUserName} said: `;
+  if (contextBlock) content += contextBlock;
+  content += `<current-message>\n${safeText}\n</current-message>`;
 
   if (quotedReply) {
     const safeQuotedFrom = escapeXml(quotedReply.quotedFrom);
@@ -350,6 +388,26 @@ async function handleMessage(ctx) {
 
   console.log(`[teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
+  // Record in chat history (for group context)
+  recordHistoryEntry(conversationId, {
+    timestamp: activity.timestamp || new Date().toISOString(),
+    message_id: activityId,
+    user_id: senderAadObjectId,
+    user_name: senderName,
+    text,
+  });
+
+  // Check for image attachments
+  let mediaPath = null;
+  if (isGraphEnabled() && activity.attachments?.length) {
+    for (const att of activity.attachments) {
+      if (att.contentType?.startsWith('image/') && att.contentUrl) {
+        mediaPath = await downloadHostedContent(att.contentUrl, att.name || 'image.png');
+        if (mediaPath) break;
+      }
+    }
+  }
+
   const endpoint = buildEndpoint(conversationId, {
     type: convType,
     aadObjectId: senderAadObjectId,
@@ -375,7 +433,8 @@ async function handleMessage(ctx) {
       return;
     }
 
-    const msg = formatMessage('dm', senderName, text, { quotedReply });
+    let msg = formatMessage('dm', senderName, text, { quotedReply });
+    if (mediaPath) msg += ` ---- file: ${escapeXml(mediaPath)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
@@ -394,7 +453,6 @@ async function handleMessage(ctx) {
 
     const allowedGroup = isGroupAllowed(conversationId);
 
-    // Check route-level allowFrom (if set, user must be in the list or be owner)
     if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
       if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
         if (mentioned) {
@@ -413,11 +471,9 @@ async function handleMessage(ctx) {
       return;
     }
 
-    // Determine whether mention is required
     const requireMention = routeConfig.requireMention;
 
     if (requireMention && !mentioned && !senderIsOwner) {
-      console.log(`[teams] Group message without @mention (requireMention=true), ignoring`);
       return;
     }
 
@@ -427,7 +483,36 @@ async function handleMessage(ctx) {
 
     const cleanText = htmlToText(stripBotMention(activity));
     const groupName = getGroupName(conversationId);
-    const msg = formatMessage(convType, senderName, cleanText, { groupName, quotedReply });
+
+    // Build group context from in-memory history + optional Graph API fetch
+    const contextLimit = config.groups?.[conversationId]?.historyLimit
+      || config.message?.context_messages || 10;
+    let contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
+
+    if (contextMessages.length === 0 && isGraphEnabled()) {
+      try {
+        const teamId = activity.channelData?.team?.id || '';
+        const graphMessages = teamId
+          ? await fetchChannelHistory(teamId, conversationId, contextLimit)
+          : await fetchChatHistory(conversationId, contextLimit);
+        for (const gm of graphMessages) {
+          recordHistoryEntry(conversationId, {
+            timestamp: gm.time,
+            message_id: `graph-${gm.time}`,
+            user_id: gm.from,
+            user_name: gm.from,
+            text: gm.body,
+          });
+        }
+        contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
+      } catch (err) {
+        console.warn(`[teams] Graph context fetch failed: ${err.message}`);
+      }
+    }
+
+    const contextBlock = formatContextBlock(contextMessages);
+    let msg = formatMessage(convType, senderName, cleanText, { groupName, quotedReply, contextBlock });
+    if (mediaPath) msg += ` ---- file: ${escapeXml(mediaPath)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
@@ -498,6 +583,60 @@ expressApp.post('/internal/send', async (req, res) => {
   }
 });
 
+// ── Internal media send endpoint ──
+
+expressApp.use('/internal/send-media', express.json());
+expressApp.post('/internal/send-media', async (req, res) => {
+  const token = req.headers['x-internal-token'];
+  if (!token || token !== INTERNAL_TOKEN) {
+    return res.status(403).json({ error: 'unauthorized' });
+  }
+
+  const { conversationId, mediaType, filePath } = req.body || {};
+  if (!conversationId || !filePath) {
+    return res.status(400).json({ error: 'missing conversationId or filePath' });
+  }
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'file not found' });
+    }
+
+    const reference = getConversationReference(conversationId);
+    if (!reference) {
+      return res.status(404).json({ error: 'no conversation reference found' });
+    }
+
+    if (mediaType === 'image') {
+      const imageData = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).slice(1) || 'png';
+      const base64 = imageData.toString('base64');
+      const contentUrl = `data:image/${ext};base64,${base64}`;
+
+      await teamsApp.send(conversationId, {
+        type: 'message',
+        text: '',
+        attachments: [{
+          contentType: `image/${ext}`,
+          contentUrl,
+          name: path.basename(filePath),
+        }],
+      });
+    } else {
+      const fileName = path.basename(filePath);
+      await teamsApp.send(conversationId, {
+        type: 'message',
+        text: `📎 ${fileName}`,
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`[teams] Internal send-media error: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Health check ──
 
 expressApp.get('/health', (req, res) => {
@@ -507,6 +646,7 @@ expressApp.get('/health', (req, res) => {
     service: 'zylos-teams',
     uptime: Math.floor(process.uptime()),
     hasCredentials: !!(credentials.appId && credentials.appPassword),
+    hasGraph: isGraphEnabled(),
     groupPolicy: healthConfig.groupPolicy || 'allowlist',
     dmPolicy: healthConfig.dmPolicy || 'owner'
   });

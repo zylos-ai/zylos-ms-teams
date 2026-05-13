@@ -165,6 +165,58 @@ async function sendViaInternal(conversationId, text) {
   }
 }
 
+const MEDIA_PREFIXES = ['[MEDIA:image]', '[MEDIA:file]'];
+
+function parseMediaPrefix(text) {
+  for (const prefix of MEDIA_PREFIXES) {
+    if (text.startsWith(prefix)) {
+      const mediaType = prefix === '[MEDIA:image]' ? 'image' : 'file';
+      const filePath = text.slice(prefix.length).trim();
+      return { mediaType, filePath };
+    }
+  }
+  return null;
+}
+
+async function sendMedia(mediaType, filePath) {
+  const { conversationId } = parsedEndpoint;
+  const internalToken = readInternalToken();
+  if (!internalToken) {
+    throw new Error('Internal token not found. Is the teams service running?');
+  }
+
+  const port = config.port || 3978;
+  const body = JSON.stringify({
+    conversationId,
+    mediaType,
+    filePath,
+    type: parsedEndpoint.type || 'dm'
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/internal/send-media`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Token': internalToken
+      },
+      body,
+      signal: controller.signal
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || `HTTP ${response.status}`);
+    }
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sendText(text) {
   const chunks = splitMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
@@ -183,7 +235,12 @@ async function sendText(text) {
 
 async function send() {
   try {
-    await sendText(message);
+    const media = parseMediaPrefix(message);
+    if (media) {
+      await sendMedia(media.mediaType, media.filePath);
+    } else {
+      await sendText(message);
+    }
     console.log('Message sent successfully');
     process.exit(0);
   } catch (err) {
