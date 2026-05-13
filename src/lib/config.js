@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG = {
   dmAllowFrom: [],
   groupPolicy: 'allowlist',
   groups: {},
+  teamOverrides: {},
   message: {
     context_messages: 10
   }
@@ -34,11 +35,59 @@ export function mergeConfigWithDefaults(parsed = {}) {
       ...DEFAULT_CONFIG.owner,
       ...(parsed.owner || {})
     },
+    teamOverrides: parsed.teamOverrides || {},
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})
     }
   };
+}
+
+/**
+ * Resolve route-level configuration for an activity by walking:
+ *   global defaults -> team override -> channel override
+ *
+ * Each level can set: requireMention, replyStyle, allowFrom
+ *
+ * @param {object} activity - The Teams activity
+ * @param {object} config - The loaded config
+ * @returns {{ requireMention: boolean, replyStyle: string, allowFrom: string[] }}
+ */
+export function resolveRouteConfig(activity, config) {
+  // Global defaults
+  const result = {
+    requireMention: true,
+    replyStyle: 'top-level',
+    allowFrom: [],
+  };
+
+  const teamId = activity.channelData?.team?.id
+    || activity.channelData?.teamsTeamId
+    || activity.team?.id
+    || '';
+  const conversationId = activity.conversation?.id || '';
+
+  const teamOverrides = config.teamOverrides || {};
+  const teamConfig = teamOverrides[teamId];
+
+  if (!teamConfig) return result;
+
+  // Apply team-level overrides
+  if (teamConfig.requireMention !== undefined) result.requireMention = teamConfig.requireMention;
+  if (teamConfig.replyStyle !== undefined) result.replyStyle = teamConfig.replyStyle;
+  if (Array.isArray(teamConfig.allowFrom)) result.allowFrom = teamConfig.allowFrom;
+
+  // Apply channel-level overrides
+  const channels = teamConfig.channels || {};
+  const channelConfig = channels[conversationId];
+
+  if (!channelConfig) return result;
+
+  if (channelConfig.requireMention !== undefined) result.requireMention = channelConfig.requireMention;
+  if (channelConfig.replyStyle !== undefined) result.replyStyle = channelConfig.replyStyle;
+  if (Array.isArray(channelConfig.allowFrom)) result.allowFrom = channelConfig.allowFrom;
+
+  return result;
 }
 
 export function loadConfig() {

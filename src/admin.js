@@ -173,6 +173,142 @@ const commands = {
     }
   },
 
+  'add-team': (teamId, name) => {
+    if (!teamId || !name) {
+      console.error('Usage: admin.js add-team <teamId> <name>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.teamOverrides) config.teamOverrides = {};
+
+    if (config.teamOverrides[teamId]) {
+      console.log(`Team ${teamId} already configured, updating name`);
+    }
+
+    config.teamOverrides[teamId] = {
+      ...config.teamOverrides[teamId],
+      name,
+      requireMention: config.teamOverrides[teamId]?.requireMention ?? true,
+      replyStyle: config.teamOverrides[teamId]?.replyStyle ?? 'thread',
+      allowFrom: config.teamOverrides[teamId]?.allowFrom ?? [],
+      channels: config.teamOverrides[teamId]?.channels ?? {},
+    };
+    saveConfigOrExit(config);
+    console.log(`Added team: ${teamId} (${name})`);
+    console.log('Run: pm2 restart zylos-teams');
+  },
+
+  'remove-team': (teamId) => {
+    if (!teamId) {
+      console.error('Usage: admin.js remove-team <teamId>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.teamOverrides) config.teamOverrides = {};
+
+    if (config.teamOverrides[teamId]) {
+      const name = config.teamOverrides[teamId].name;
+      delete config.teamOverrides[teamId];
+      saveConfigOrExit(config);
+      console.log(`Removed team: ${teamId} (${name})`);
+      console.log('Run: pm2 restart zylos-teams');
+    } else {
+      console.log(`Team ${teamId} not found`);
+    }
+  },
+
+  'set-team-mention': (teamId, value) => {
+    if (!teamId || (value !== 'true' && value !== 'false')) {
+      console.error('Usage: admin.js set-team-mention <teamId> <true|false>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.teamOverrides) config.teamOverrides = {};
+    if (!config.teamOverrides[teamId]) {
+      console.error(`Team ${teamId} not found. Add it first with add-team.`);
+      process.exit(1);
+    }
+    config.teamOverrides[teamId].requireMention = value === 'true';
+    saveConfigOrExit(config);
+    console.log(`Team ${teamId} requireMention set to: ${value}`);
+    console.log('Run: pm2 restart zylos-teams');
+  },
+
+  'add-channel': (teamId, channelId, name) => {
+    if (!teamId || !channelId || !name) {
+      console.error('Usage: admin.js add-channel <teamId> <channelId> <name>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.teamOverrides) config.teamOverrides = {};
+    if (!config.teamOverrides[teamId]) {
+      console.error(`Team ${teamId} not found. Add it first with add-team.`);
+      process.exit(1);
+    }
+    if (!config.teamOverrides[teamId].channels) {
+      config.teamOverrides[teamId].channels = {};
+    }
+
+    if (config.teamOverrides[teamId].channels[channelId]) {
+      console.log(`Channel ${channelId} already configured, updating name`);
+    }
+
+    config.teamOverrides[teamId].channels[channelId] = {
+      ...config.teamOverrides[teamId].channels[channelId],
+      name,
+      requireMention: config.teamOverrides[teamId].channels[channelId]?.requireMention,
+      replyStyle: config.teamOverrides[teamId].channels[channelId]?.replyStyle,
+      allowFrom: config.teamOverrides[teamId].channels[channelId]?.allowFrom ?? [],
+    };
+    saveConfigOrExit(config);
+    console.log(`Added channel: ${channelId} (${name}) under team ${teamId}`);
+    console.log('Run: pm2 restart zylos-teams');
+  },
+
+  'remove-channel': (teamId, channelId) => {
+    if (!teamId || !channelId) {
+      console.error('Usage: admin.js remove-channel <teamId> <channelId>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.teamOverrides?.[teamId]?.channels?.[channelId]) {
+      console.log(`Channel ${channelId} not found under team ${teamId}`);
+      return;
+    }
+    const name = config.teamOverrides[teamId].channels[channelId].name;
+    delete config.teamOverrides[teamId].channels[channelId];
+    saveConfigOrExit(config);
+    console.log(`Removed channel: ${channelId} (${name}) from team ${teamId}`);
+    console.log('Run: pm2 restart zylos-teams');
+  },
+
+  'list-teams': () => {
+    const config = loadConfig();
+    const teams = config.teamOverrides || {};
+    const entries = Object.entries(teams);
+
+    if (entries.length === 0) {
+      console.log('No team overrides configured');
+      return;
+    }
+
+    console.log(`Team Overrides (${entries.length}):`);
+    for (const [teamId, teamCfg] of entries) {
+      const mention = teamCfg.requireMention !== undefined ? `requireMention: ${teamCfg.requireMention}` : '';
+      const style = teamCfg.replyStyle ? `replyStyle: ${teamCfg.replyStyle}` : '';
+      const allow = teamCfg.allowFrom?.length ? `allowFrom: [${teamCfg.allowFrom.join(', ')}]` : '';
+      console.log(`  ${teamId} - ${teamCfg.name || 'unnamed'} ${[mention, style, allow].filter(Boolean).join(', ')}`);
+
+      const channels = teamCfg.channels || {};
+      for (const [chId, chCfg] of Object.entries(channels)) {
+        const chMention = chCfg.requireMention !== undefined ? `requireMention: ${chCfg.requireMention}` : '';
+        const chStyle = chCfg.replyStyle ? `replyStyle: ${chCfg.replyStyle}` : '';
+        const chAllow = chCfg.allowFrom?.length ? `allowFrom: [${chCfg.allowFrom.join(', ')}]` : '';
+        console.log(`    ${chId} - ${chCfg.name || 'unnamed'} ${[chMention, chStyle, chAllow].filter(Boolean).join(', ')}`);
+      }
+    }
+  },
+
   'help': () => {
     console.log(`
 zylos-teams admin CLI
@@ -186,6 +322,14 @@ Commands:
   remove-group <conversation_id>      Remove a group
   set-group-policy <policy>           Set group policy (disabled|allowlist|open)
 
+  Team/Channel Overrides:
+  list-teams                          List all team overrides and channels
+  add-team <teamId> <name>            Add a team override
+  remove-team <teamId>                Remove a team override
+  set-team-mention <teamId> <bool>    Set requireMention for a team
+  add-channel <teamId> <chId> <name>  Add a channel override under a team
+  remove-channel <teamId> <chId>      Remove a channel override
+
   DM Access Control:
   set-dm-policy <open|allowlist|owner> Set DM policy
   list-dm-allow                       Show DM policy and allowFrom list
@@ -196,7 +340,7 @@ Commands:
 
 Permission flow:
   Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom
-  Group chat:  groupPolicy -> groups config
+  Group chat:  groupPolicy -> groups config -> teamOverrides -> channel overrides
   Owner always bypasses all checks.
 
 After changes, restart: pm2 restart zylos-teams

@@ -2,11 +2,13 @@
 /**
  * zylos-teams - Microsoft Teams Bot Service
  *
- * Bot Framework adapter for receiving Teams messages and routing to Claude via C4.
+ * Uses @microsoft/teams.apps v2 SDK for receiving/sending Teams messages
+ * and routes inbound messages to Claude via C4 Communication Bridge.
  */
 
 import dotenv from 'dotenv';
 import express from 'express';
+import http from 'http';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import fs from 'fs';
@@ -14,16 +16,13 @@ import path from 'path';
 
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
-import {
-  CloudAdapter,
-  ConfigurationBotFrameworkAuthentication,
-  ActivityTypes,
-  TurnContext,
-} from 'botbuilder';
+import { App, ExpressAdapter } from '@microsoft/teams.apps';
 
-import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials } from './lib/config.js';
+import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
-import { saveConversationReference } from './lib/conversation-store.js';
+import { saveConversationReference, getConversationReference } from './lib/conversation-store.js';
+import { htmlToText, extractQuotedReply } from './lib/html.js';
+import { createJwtMiddleware } from './lib/auth.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -85,28 +84,42 @@ if (!credentials.appId || !credentials.appPassword) {
   console.error('[teams] Set credentials and restart: pm2 restart zylos-teams');
 }
 
-// Bot Framework authentication configuration
-const botFrameworkAuth = new ConfigurationBotFrameworkAuthentication({}, {
-  MicrosoftAppId: credentials.appId,
-  MicrosoftAppPassword: credentials.appPassword,
-  MicrosoftAppTenantId: credentials.tenantId || '',
-  MicrosoftAppType: credentials.tenantId ? 'SingleTenant' : 'MultiTenant',
-});
-
-const adapter = new CloudAdapter(botFrameworkAuth);
-
-adapter.onTurnError = async (context, error) => {
-  console.error(`[teams] Adapter error: ${error.message}`);
-  try {
-    await context.sendActivity('Sorry, something went wrong processing your message.');
-  } catch (sendErr) {
-    console.error(`[teams] Failed to send error response: ${sendErr.message}`);
-  }
-};
-
 // Bot identity
 let botName = 'bot';
 let botId = credentials.appId || '';
+
+// ── Express + HTTP Server (we manage binding to 127.0.0.1) ──
+
+const expressApp = express();
+
+// Custom JWT validation middleware — applied BEFORE body parsing on /api/messages
+if (credentials.appId) {
+  const jwtMiddleware = createJwtMiddleware({
+    appId: credentials.appId,
+    tenantId: credentials.tenantId || undefined,
+  });
+  expressApp.post('/api/messages', jwtMiddleware);
+}
+
+// Create HTTP server bound to our Express app
+const httpServer = http.createServer(expressApp);
+
+// ── Teams App SDK ──
+// Pass our Express app to ExpressAdapter so the SDK registers routes on it.
+// We manage the HTTP server lifecycle ourselves (bind to 127.0.0.1).
+const adapter = new ExpressAdapter(expressApp);
+
+const teamsApp = new App({
+  clientId: credentials.appId || undefined,
+  clientSecret: credentials.appPassword || undefined,
+  tenantId: credentials.tenantId || undefined,
+  httpServerAdapter: adapter,
+  activity: {
+    mentions: {
+      stripText: false, // We handle mention stripping ourselves
+    },
+  },
+});
 
 // Owner binding
 async function bindOwner(aadObjectId, name) {
@@ -271,36 +284,73 @@ function escapeXml(text) {
 /**
  * Format message for C4 using XML-structured tags.
  */
-function formatMessage(type, userName, text, { groupName } = {}) {
+function formatMessage(type, userName, text, { groupName, quotedReply } = {}) {
   const prefix = type === 'dm'
     ? '[Teams DM]'
     : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
   const safeUserName = escapeXml(userName);
   const safeText = escapeXml(text);
-  return `${prefix} ${safeUserName} said: <current-message>\n${safeText}\n</current-message>`;
+
+  let content = `${prefix} ${safeUserName} said: <current-message>\n${safeText}\n</current-message>`;
+
+  if (quotedReply) {
+    const safeQuotedFrom = escapeXml(quotedReply.quotedFrom);
+    const safeQuotedText = escapeXml(quotedReply.quotedText);
+    content += `\n<quoted-reply from="${safeQuotedFrom}">${safeQuotedText}</quoted-reply>`;
+  }
+
+  return content;
+}
+
+/**
+ * Save a conversation reference with tenant ID.
+ */
+function saveConvRef(activity, ref) {
+  const conversationId = activity.conversation?.id;
+  if (!conversationId) return;
+
+  const tenantId = activity.channelData?.tenant?.id
+    || activity.conversation?.tenantId
+    || credentials.tenantId
+    || '';
+
+  // Build a conversation reference compatible with Bot Framework format
+  const convRef = ref || {
+    activityId: activity.id,
+    bot: activity.recipient,
+    channelId: activity.channelId || 'msteams',
+    conversation: activity.conversation,
+    serviceUrl: activity.serviceUrl,
+    user: activity.from,
+  };
+
+  saveConversationReference(conversationId, convRef, { tenantId });
 }
 
 /**
  * Handle incoming message activity.
  */
-async function handleMessage(context) {
-  const activity = context.activity;
-  if (!activity || activity.type !== ActivityTypes.Message) return;
+async function handleMessage(ctx) {
+  const activity = ctx.activity;
+  if (!activity) return;
 
   const activityId = activity.id;
   if (isDuplicate(activityId)) return;
 
   // Save conversation reference for proactive messaging
-  const conversationRef = TurnContext.getConversationReference(activity);
-  const conversationId = activity.conversation?.id;
-  if (conversationId && conversationRef) {
-    saveConversationReference(conversationId, conversationRef);
-  }
+  saveConvRef(activity, ctx.ref);
 
   const senderAadObjectId = activity.from?.aadObjectId || '';
   const senderName = activity.from?.name || 'unknown';
+  const conversationId = activity.conversation?.id || '';
   const convType = getConversationType(activity);
-  const text = activity.text || '';
+
+  // Process HTML to plain text
+  const rawText = activity.text || '';
+  const text = htmlToText(rawText);
+
+  // Extract quoted reply if present
+  const quotedReply = extractQuotedReply(activity);
 
   console.log(`[teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
@@ -312,7 +362,7 @@ async function handleMessage(context) {
 
   const rejectReply = async (errMsg) => {
     try {
-      await context.sendActivity(errMsg);
+      await ctx.send(errMsg);
     } catch (err) {
       console.error(`[teams] Failed to send reject reply: ${err.message}`);
     }
@@ -325,11 +375,11 @@ async function handleMessage(context) {
 
     if (!isDmAllowed(senderAadObjectId)) {
       console.log(`[teams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
-      await context.sendActivity("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
+      await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
       return;
     }
 
-    const msg = formatMessage('dm', senderName, text);
+    const msg = formatMessage('dm', senderName, text, { quotedReply });
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
@@ -339,6 +389,7 @@ async function handleMessage(context) {
     const senderIsOwner = isOwner(senderAadObjectId);
     const groupPolicy = config.groupPolicy || 'allowlist';
     const mentioned = isBotMentioned(activity);
+    const routeConfig = resolveRouteConfig(activity, config);
 
     if (groupPolicy === 'disabled') {
       console.log(`[teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
@@ -347,17 +398,30 @@ async function handleMessage(context) {
 
     const allowedGroup = isGroupAllowed(conversationId);
 
+    // Check route-level allowFrom (if set, user must be in the list or be owner)
+    if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
+      if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
+        if (mentioned) {
+          console.log(`[teams] User ${senderAadObjectId} not in route allowFrom, rejecting`);
+          await ctx.send("Sorry, you don't have access in this channel.");
+        }
+        return;
+      }
+    }
+
     if (!allowedGroup && !senderIsOwner) {
       if (mentioned) {
         console.log(`[teams] Group ${conversationId} not allowed, rejecting`);
-        await context.sendActivity("Sorry, I'm not available in this group.");
+        await ctx.send("Sorry, I'm not available in this group.");
       }
       return;
     }
 
-    // In groups/channels, only respond to @mentions (or owner messages in allowed groups)
-    if (!mentioned && !senderIsOwner) {
-      console.log(`[teams] Group message without @mention, ignoring`);
+    // Determine whether mention is required
+    const requireMention = routeConfig.requireMention;
+
+    if (requireMention && !mentioned && !senderIsOwner) {
+      console.log(`[teams] Group message without @mention (requireMention=true), ignoring`);
       return;
     }
 
@@ -365,61 +429,53 @@ async function handleMessage(context) {
       // Owner in non-allowed group without mention: process as owner override
     }
 
-    const cleanText = stripBotMention(activity);
+    const cleanText = htmlToText(stripBotMention(activity));
     const groupName = getGroupName(conversationId);
-    const msg = formatMessage(convType, senderName, cleanText, { groupName });
+    const msg = formatMessage(convType, senderName, cleanText, { groupName, quotedReply });
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
 }
 
-// Express app
-const app = express();
-app.use(express.json());
-
-// Bot Framework messaging endpoint
-app.post('/api/messages', async (req, res) => {
+// Register message handler with the Teams App SDK
+teamsApp.on('message', async (ctx) => {
   try {
-    await adapter.process(req, res, async (context) => {
-      if (context.activity.type === ActivityTypes.Message) {
-        await handleMessage(context);
-      } else if (context.activity.type === ActivityTypes.ConversationUpdate) {
-        // Handle member added events (bot installed in chat)
-        const membersAdded = context.activity.membersAdded || [];
-        for (const member of membersAdded) {
-          if (member.id === context.activity.recipient?.id) {
-            console.log(`[teams] Bot added to conversation: ${context.activity.conversation?.id}`);
-            const ref = TurnContext.getConversationReference(context.activity);
-            if (context.activity.conversation?.id) {
-              saveConversationReference(context.activity.conversation.id, ref);
-            }
-          }
-        }
-      }
-    });
+    await handleMessage(ctx);
   } catch (err) {
-    console.error(`[teams] Error processing request: ${err.message}`);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error' });
+    console.error(`[teams] Error handling message: ${err.message}`);
+    try {
+      await ctx.send('Sorry, something went wrong processing your message.');
+    } catch (sendErr) {
+      console.error(`[teams] Failed to send error response: ${sendErr.message}`);
     }
   }
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  const healthConfig = getConfig();
-  res.json({
-    status: 'ok',
-    service: 'zylos-teams',
-    uptime: Math.floor(process.uptime()),
-    hasCredentials: !!(credentials.appId && credentials.appPassword),
-    groupPolicy: healthConfig.groupPolicy || 'allowlist',
-    dmPolicy: healthConfig.dmPolicy || 'owner'
-  });
+// Handle conversation update (bot added to conversation)
+teamsApp.on('conversationUpdate', async (ctx) => {
+  try {
+    const activity = ctx.activity;
+    const membersAdded = activity.membersAdded || [];
+    for (const member of membersAdded) {
+      if (member.id === activity.recipient?.id) {
+        console.log(`[teams] Bot added to conversation: ${activity.conversation?.id}`);
+        saveConvRef(activity, ctx.ref);
+      }
+    }
+  } catch (err) {
+    console.error(`[teams] Error handling conversationUpdate: ${err.message}`);
+  }
 });
 
-// Internal endpoint for send.js to send messages via the adapter
-app.post('/internal/send', async (req, res) => {
+// Error handler
+teamsApp.event('error', (event) => {
+  console.error(`[teams] App error: ${event?.error?.message || 'unknown error'}`);
+});
+
+// ── Internal send endpoint (accessed by send.js via localhost) ──
+
+expressApp.use('/internal/send', express.json());
+expressApp.post('/internal/send', async (req, res) => {
   const token = req.headers['x-internal-token'];
   if (!token || token !== INTERNAL_TOKEN) {
     return res.status(403).json({ error: 'unauthorized' });
@@ -431,19 +487,13 @@ app.post('/internal/send', async (req, res) => {
   }
 
   try {
-    const { getConversationReference: getRef } = await import('./lib/conversation-store.js');
-    const reference = getRef(conversationId);
+    const reference = getConversationReference(conversationId);
     if (!reference) {
       return res.status(404).json({ error: 'no conversation reference found' });
     }
 
-    await adapter.continueConversationAsync(
-      credentials.appId,
-      reference,
-      async (context) => {
-        await context.sendActivity(text);
-      }
-    );
+    // Use the App's send method for proactive messaging
+    await teamsApp.send(conversationId, { type: 'message', text });
 
     res.json({ ok: true });
   } catch (err) {
@@ -452,7 +502,22 @@ app.post('/internal/send', async (req, res) => {
   }
 });
 
-let server = null;
+// ── Health check ──
+
+expressApp.get('/health', (req, res) => {
+  const healthConfig = getConfig();
+  res.json({
+    status: 'ok',
+    service: 'zylos-teams',
+    uptime: Math.floor(process.uptime()),
+    hasCredentials: !!(credentials.appId && credentials.appPassword),
+    groupPolicy: healthConfig.groupPolicy || 'allowlist',
+    dmPolicy: healthConfig.dmPolicy || 'owner'
+  });
+});
+
+// ── Lifecycle ──
+
 let isShuttingDown = false;
 
 function shutdown() {
@@ -463,8 +528,7 @@ function shutdown() {
   stopWatching();
 
   const finishExit = () => process.exit(0);
-  if (!server) return finishExit();
-  server.close(() => finishExit());
+  httpServer.close(() => finishExit());
   setTimeout(finishExit, 2000).unref();
 }
 
@@ -475,20 +539,25 @@ const PORT = config.port || 3978;
 const MAX_LISTEN_RETRIES = 5;
 
 async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
+  // Initialize the Teams SDK (registers /api/messages on our Express app)
+  // We call initialize() directly instead of start() because we manage the
+  // HTTP server ourselves to bind to 127.0.0.1 specifically.
+  await teamsApp.initialize();
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const started = await new Promise((resolve, reject) => {
-        const srv = app.listen(port, '127.0.0.1', () => {
-          srv.off('error', onError);
-          resolve(srv);
-        });
+      await new Promise((resolve, reject) => {
         const onError = (err) => {
-          srv.off('error', onError);
+          httpServer.off('error', onError);
           reject(err);
         };
-        srv.once('error', onError);
+        httpServer.once('error', onError);
+        httpServer.listen(port, '127.0.0.1', () => {
+          httpServer.off('error', onError);
+          resolve();
+        });
       });
-      return started;
+      return;
     } catch (err) {
       if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
         const delay = attempt * 1000;
@@ -503,8 +572,8 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
 }
 
 (async () => {
-  server = await startServerWithRetry(PORT);
-  server.on('error', (err) => {
+  await startServerWithRetry(PORT);
+  httpServer.on('error', (err) => {
     console.error(`[teams] Server error: ${err.message}`);
   });
   console.log(`[teams] HTTP server running on 127.0.0.1:${PORT}`);
