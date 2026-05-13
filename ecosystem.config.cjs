@@ -3,9 +3,9 @@ const os = require('os');
 
 module.exports = {
   apps: [{
-    name: 'zylos-msteams',
+    name: 'zylos-teams',
     script: 'src/index.js',
-    cwd: path.join(os.homedir(), 'zylos/.claude/skills/msteams'),
+    cwd: path.join(os.homedir(), 'zylos/.claude/skills/teams'),
     env: {
       NODE_ENV: 'production'
     },
@@ -13,8 +13,8 @@ module.exports = {
     max_restarts: 10,
     restart_delay: 5000,
     kill_timeout: 5000,
-    error_file: path.join(os.homedir(), 'zylos/components/msteams/logs/error.log'),
-    out_file: path.join(os.homedir(), 'zylos/components/msteams/logs/out.log'),
+    error_file: path.join(os.homedir(), 'zylos/components/teams/logs/error.log'),
+    out_file: path.join(os.homedir(), 'zylos/components/teams/logs/out.log'),
     log_date_format: 'YYYY-MM-DD HH:mm:ss'
   }]
 };

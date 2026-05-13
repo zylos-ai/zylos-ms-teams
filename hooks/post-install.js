@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Post-install hook for zylos-msteams
+ * Post-install hook for zylos-teams
  *
- * This hook handles msteams-specific setup:
+ * This hook handles teams-specific setup:
  * - Create subdirectories (logs, media, data)
  * - Create default config.json
  * - Check for environment variables
@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/msteams');
+const DATA_DIR = path.join(HOME, 'zylos/components/teams');
 const ENV_FILE = path.join(HOME, 'zylos/.env');
 
 const INITIAL_CONFIG = {
@@ -22,7 +22,7 @@ const INITIAL_CONFIG = {
   groupPolicy: 'allowlist'
 };
 
-console.log('[post-install] Running msteams-specific setup...\n');
+console.log('[post-install] Running teams-specific setup...\n');
 
 // 1. Create subdirectories
 console.log('Creating subdirectories...');

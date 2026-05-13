@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/msteams');
+const DATA_DIR = path.join(HOME, 'zylos/components/teams');
 const STORE_PATH = path.join(DATA_DIR, 'conversations.json');
 
 let references = null;
@@ -15,7 +15,7 @@ function load() {
       references = {};
     }
   } catch (err) {
-    console.error(`[msteams] Failed to load conversation store: ${err.message}`);
+    console.error(`[teams] Failed to load conversation store: ${err.message}`);
     references = {};
   }
   return references;
@@ -28,7 +28,7 @@ function save() {
     fs.renameSync(tmpPath, STORE_PATH);
     return true;
   } catch (err) {
-    console.error(`[msteams] Failed to save conversation store: ${err.message}`);
+    console.error(`[teams] Failed to save conversation store: ${err.message}`);
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     } catch {}

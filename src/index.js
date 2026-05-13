@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * zylos-msteams - Microsoft Teams Bot Service
+ * zylos-teams - Microsoft Teams Bot Service
  *
  * Bot Framework adapter for receiving Teams messages and routing to Claude via C4.
  */
@@ -32,11 +32,11 @@ try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(TOKEN_FILE, INTERNAL_TOKEN, { mode: 0o600 });
 } catch (err) {
-  console.error(`[msteams] Failed to write internal token file: ${err.message}`);
+  console.error(`[teams] Failed to write internal token file: ${err.message}`);
 }
 
-console.log('[msteams] Starting...');
-console.log(`[msteams] Data directory: ${DATA_DIR}`);
+console.log('[teams] Starting...');
+console.log(`[teams] Data directory: ${DATA_DIR}`);
 
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
@@ -47,7 +47,7 @@ fs.mkdirSync(MEDIA_DIR, { recursive: true });
 const messageDeduper = createMessageDeduper({
   ttlMs: MESSAGE_DEDUP_TTL_MS,
   logDuplicate: (messageId) => {
-    console.log(`[msteams] Duplicate activity ${messageId}, skipping`);
+    console.log(`[teams] Duplicate activity ${messageId}, skipping`);
   }
 });
 
@@ -61,18 +61,18 @@ const dedupCleanupInterval = setInterval(() => {
 
 // Load configuration
 let config = getConfig();
-console.log(`[msteams] Config loaded, enabled: ${config.enabled}`);
+console.log(`[teams] Config loaded, enabled: ${config.enabled}`);
 
 if (!config.enabled) {
-  console.log('[msteams] Component disabled in config, exiting.');
+  console.log('[teams] Component disabled in config, exiting.');
   process.exit(0);
 }
 
 watchConfig((newConfig) => {
-  console.log('[msteams] Config reloaded');
+  console.log('[teams] Config reloaded');
   config = newConfig;
   if (!newConfig.enabled) {
-    console.log('[msteams] Component disabled, stopping...');
+    console.log('[teams] Component disabled, stopping...');
     shutdown();
   }
 });
@@ -80,9 +80,9 @@ watchConfig((newConfig) => {
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
-  console.error('[msteams] WARNING: MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not set in ~/zylos/.env');
-  console.error('[msteams] The bot will start but cannot authenticate with Teams.');
-  console.error('[msteams] Set credentials and restart: pm2 restart zylos-msteams');
+  console.error('[teams] WARNING: MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not set in ~/zylos/.env');
+  console.error('[teams] The bot will start but cannot authenticate with Teams.');
+  console.error('[teams] Set credentials and restart: pm2 restart zylos-teams');
 }
 
 // Bot Framework authentication configuration
@@ -96,11 +96,11 @@ const botFrameworkAuth = new ConfigurationBotFrameworkAuthentication({}, {
 const adapter = new CloudAdapter(botFrameworkAuth);
 
 adapter.onTurnError = async (context, error) => {
-  console.error(`[msteams] Adapter error: ${error.message}`);
+  console.error(`[teams] Adapter error: ${error.message}`);
   try {
     await context.sendActivity('Sorry, something went wrong processing your message.');
   } catch (sendErr) {
-    console.error(`[msteams] Failed to send error response: ${sendErr.message}`);
+    console.error(`[teams] Failed to send error response: ${sendErr.message}`);
   }
 };
 
@@ -118,10 +118,10 @@ async function bindOwner(aadObjectId, name) {
   };
   if (!saveConfig(config)) {
     config.owner = previousOwner;
-    console.error('[msteams] Failed to persist owner binding');
+    console.error('[teams] Failed to persist owner binding');
     return null;
   }
-  console.log(`[msteams] Owner bound: ${name} (${aadObjectId})`);
+  console.log(`[teams] Owner bound: ${name} (${aadObjectId})`);
   return name;
 }
 
@@ -217,7 +217,7 @@ function parseC4Response(stdout) {
  */
 function sendToC4(source, endpoint, content, onReject) {
   if (!content) {
-    console.error('[msteams] sendToC4 called with empty content');
+    console.error('[teams] sendToC4 called with empty content');
     return;
   }
   const args = [
@@ -230,28 +230,28 @@ function sendToC4(source, endpoint, content, onReject) {
 
   execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (error, stdout) => {
     if (!error) {
-      console.log(`[msteams] Sent to C4: ${content.substring(0, 50)}...`);
+      console.log(`[teams] Sent to C4: ${content.substring(0, 50)}...`);
       return;
     }
     const response = parseC4Response(error.stdout || stdout);
     if (response && response.ok === false && response.error?.message) {
-      console.warn(`[msteams] C4 rejected (${response.error.code}): ${response.error.message}`);
+      console.warn(`[teams] C4 rejected (${response.error.code}): ${response.error.message}`);
       if (onReject) onReject(response.error.message);
       return;
     }
-    console.warn(`[msteams] C4 send failed, retrying in 2s: ${error.message}`);
+    console.warn(`[teams] C4 send failed, retrying in 2s: ${error.message}`);
     setTimeout(() => {
       execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (retryError, retryStdout) => {
         if (!retryError) {
-          console.log(`[msteams] Sent to C4 (retry): ${content.substring(0, 50)}...`);
+          console.log(`[teams] Sent to C4 (retry): ${content.substring(0, 50)}...`);
           return;
         }
         const retryResponse = parseC4Response(retryError.stdout || retryStdout);
         if (retryResponse && retryResponse.ok === false && retryResponse.error?.message) {
-          console.error(`[msteams] C4 rejected after retry (${retryResponse.error.code}): ${retryResponse.error.message}`);
+          console.error(`[teams] C4 rejected after retry (${retryResponse.error.code}): ${retryResponse.error.message}`);
           if (onReject) onReject(retryResponse.error.message);
         } else {
-          console.error(`[msteams] C4 send failed after retry: ${retryError.message}`);
+          console.error(`[teams] C4 send failed after retry: ${retryError.message}`);
         }
       });
     }, 2000);
@@ -302,7 +302,7 @@ async function handleMessage(context) {
   const convType = getConversationType(activity);
   const text = activity.text || '';
 
-  console.log(`[msteams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
+  console.log(`[teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
   const endpoint = buildEndpoint(conversationId, {
     type: convType,
@@ -314,7 +314,7 @@ async function handleMessage(context) {
     try {
       await context.sendActivity(errMsg);
     } catch (err) {
-      console.error(`[msteams] Failed to send reject reply: ${err.message}`);
+      console.error(`[teams] Failed to send reject reply: ${err.message}`);
     }
   };
 
@@ -324,13 +324,13 @@ async function handleMessage(context) {
     }
 
     if (!isDmAllowed(senderAadObjectId)) {
-      console.log(`[msteams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
+      console.log(`[teams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
       await context.sendActivity("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
       return;
     }
 
     const msg = formatMessage('dm', senderName, text);
-    sendToC4('msteams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
 
@@ -341,7 +341,7 @@ async function handleMessage(context) {
     const mentioned = isBotMentioned(activity);
 
     if (groupPolicy === 'disabled') {
-      console.log(`[msteams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
+      console.log(`[teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
       return;
     }
 
@@ -349,7 +349,7 @@ async function handleMessage(context) {
 
     if (!allowedGroup && !senderIsOwner) {
       if (mentioned) {
-        console.log(`[msteams] Group ${conversationId} not allowed, rejecting`);
+        console.log(`[teams] Group ${conversationId} not allowed, rejecting`);
         await context.sendActivity("Sorry, I'm not available in this group.");
       }
       return;
@@ -357,7 +357,7 @@ async function handleMessage(context) {
 
     // In groups/channels, only respond to @mentions (or owner messages in allowed groups)
     if (!mentioned && !senderIsOwner) {
-      console.log(`[msteams] Group message without @mention, ignoring`);
+      console.log(`[teams] Group message without @mention, ignoring`);
       return;
     }
 
@@ -368,7 +368,7 @@ async function handleMessage(context) {
     const cleanText = stripBotMention(activity);
     const groupName = getGroupName(conversationId);
     const msg = formatMessage(convType, senderName, cleanText, { groupName });
-    sendToC4('msteams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
 }
@@ -388,7 +388,7 @@ app.post('/api/messages', async (req, res) => {
         const membersAdded = context.activity.membersAdded || [];
         for (const member of membersAdded) {
           if (member.id === context.activity.recipient?.id) {
-            console.log(`[msteams] Bot added to conversation: ${context.activity.conversation?.id}`);
+            console.log(`[teams] Bot added to conversation: ${context.activity.conversation?.id}`);
             const ref = TurnContext.getConversationReference(context.activity);
             if (context.activity.conversation?.id) {
               saveConversationReference(context.activity.conversation.id, ref);
@@ -398,7 +398,7 @@ app.post('/api/messages', async (req, res) => {
       }
     });
   } catch (err) {
-    console.error(`[msteams] Error processing request: ${err.message}`);
+    console.error(`[teams] Error processing request: ${err.message}`);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -410,7 +410,7 @@ app.get('/health', (req, res) => {
   const healthConfig = getConfig();
   res.json({
     status: 'ok',
-    service: 'zylos-msteams',
+    service: 'zylos-teams',
     uptime: Math.floor(process.uptime()),
     hasCredentials: !!(credentials.appId && credentials.appPassword),
     groupPolicy: healthConfig.groupPolicy || 'allowlist',
@@ -447,7 +447,7 @@ app.post('/internal/send', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error(`[msteams] Internal send error: ${err.message}`);
+    console.error(`[teams] Internal send error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -458,7 +458,7 @@ let isShuttingDown = false;
 function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log('[msteams] Shutting down...');
+  console.log('[teams] Shutting down...');
   clearInterval(dedupCleanupInterval);
   stopWatching();
 
@@ -492,7 +492,7 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
     } catch (err) {
       if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
         const delay = attempt * 1000;
-        console.error(`[msteams] Port ${port} in use (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+        console.error(`[teams] Port ${port} in use (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
@@ -505,13 +505,13 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
 (async () => {
   server = await startServerWithRetry(PORT);
   server.on('error', (err) => {
-    console.error(`[msteams] Server error: ${err.message}`);
+    console.error(`[teams] Server error: ${err.message}`);
   });
-  console.log(`[msteams] HTTP server running on 127.0.0.1:${PORT}`);
-  console.log(`[msteams] Bot identity: ${botName} (${botId || 'no app ID'})`);
-  console.log(`[msteams] Credentials: ${credentials.appId ? 'configured' : 'MISSING'}`);
-  console.log(`[msteams] DM policy: ${config.dmPolicy || 'owner'}, Group policy: ${config.groupPolicy || 'allowlist'}`);
+  console.log(`[teams] HTTP server running on 127.0.0.1:${PORT}`);
+  console.log(`[teams] Bot identity: ${botName} (${botId || 'no app ID'})`);
+  console.log(`[teams] Credentials: ${credentials.appId ? 'configured' : 'MISSING'}`);
+  console.log(`[teams] DM policy: ${config.dmPolicy || 'owner'}, Group policy: ${config.groupPolicy || 'allowlist'}`);
 })().catch((err) => {
-  console.error(`[msteams] Fatal startup error: ${err.message}`);
+  console.error(`[teams] Fatal startup error: ${err.message}`);
   process.exit(1);
 });

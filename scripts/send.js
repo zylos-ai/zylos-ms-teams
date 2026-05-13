@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * C4 Communication Bridge Interface for zylos-msteams
+ * C4 Communication Bridge Interface for zylos-teams
  *
  * Usage:
  *   ./send.js <endpoint> "message text"
@@ -57,7 +57,7 @@ if (message.trim() === '[SKIP]') {
 
 const config = getConfig();
 if (!config.enabled) {
-  console.error('Error: msteams is disabled in config');
+  console.error('Error: teams is disabled in config');
   process.exit(1);
 }
 
@@ -137,7 +137,7 @@ function readInternalToken() {
 async function sendViaInternal(conversationId, text) {
   const internalToken = readInternalToken();
   if (!internalToken) {
-    throw new Error('Internal token not found. Is the msteams service running?');
+    throw new Error('Internal token not found. Is the teams service running?');
   }
 
   const port = config.port || 3978;
@@ -194,7 +194,7 @@ async function sendMedia(type, filePath) {
   // TODO: Implement media upload via Microsoft Graph API
   // For now, send a text message with the file path as a placeholder
   const label = type === 'image' ? '[image]' : `[file: ${path.basename(trimmedPath)}]`;
-  console.warn(`[msteams] Media upload not yet implemented. Sending text placeholder for: ${trimmedPath}`);
+  console.warn(`[teams] Media upload not yet implemented. Sending text placeholder for: ${trimmedPath}`);
   await sendViaInternal(conversationId, `${label} (media upload not yet supported)`);
 }
 

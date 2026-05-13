@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * zylos-msteams admin CLI
+ * zylos-teams admin CLI
  * Manage Microsoft Teams bot configuration
  *
  * Usage: node admin.js <command> [args]
@@ -64,7 +64,7 @@ const commands = {
     }
     saveConfigOrExit(config);
     console.log(`Added group: ${conversationId} (${name})`);
-    console.log('Run: pm2 restart zylos-msteams');
+    console.log('Run: pm2 restart zylos-teams');
   },
 
   'remove-group': (conversationId) => {
@@ -79,7 +79,7 @@ const commands = {
       delete config.groups[conversationId];
       saveConfigOrExit(config);
       console.log(`Removed group: ${conversationId} (${name})`);
-      console.log('Run: pm2 restart zylos-msteams');
+      console.log('Run: pm2 restart zylos-teams');
     } else {
       console.log(`Group ${conversationId} not found`);
     }
@@ -96,7 +96,7 @@ const commands = {
     config.groupPolicy = normalizedPolicy;
     saveConfigOrExit(config);
     console.log(`Group policy set to: ${normalizedPolicy}`);
-    console.log('Run: pm2 restart zylos-msteams');
+    console.log('Run: pm2 restart zylos-teams');
   },
 
   'set-dm-policy': (policy) => {
@@ -111,7 +111,7 @@ const commands = {
     saveConfigOrExit(config);
     const desc = { open: 'Anyone can DM', allowlist: 'Only dmAllowFrom users can DM', owner: 'Only owner can DM' };
     console.log(`DM policy set to: ${policy} (${desc[policy]})`);
-    console.log('Run: pm2 restart zylos-msteams');
+    console.log('Run: pm2 restart zylos-teams');
   },
 
   'list-dm-allow': () => {
@@ -139,7 +139,7 @@ const commands = {
     if ((config.dmPolicy || 'owner') !== 'allowlist') {
       console.log(`Note: dmPolicy is "${config.dmPolicy || 'owner'}", set to "allowlist" for this to take effect.`);
     }
-    console.log('Run: pm2 restart zylos-msteams');
+    console.log('Run: pm2 restart zylos-teams');
   },
 
   'remove-dm-allow': (userId) => {
@@ -175,7 +175,7 @@ const commands = {
 
   'help': () => {
     console.log(`
-zylos-msteams admin CLI
+zylos-teams admin CLI
 
 Commands:
   show                                Show full config
@@ -199,7 +199,7 @@ Permission flow:
   Group chat:  groupPolicy -> groups config
   Owner always bypasses all checks.
 
-After changes, restart bot: pm2 restart zylos-msteams
+After changes, restart: pm2 restart zylos-teams
 `);
   }
 };

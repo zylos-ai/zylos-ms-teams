@@ -1,5 +1,5 @@
 ---
-name: msteams
+name: teams
 version: 0.1.0
 description: >-
   Microsoft Teams communication channel.
@@ -9,16 +9,16 @@ description: >-
   (4) managing group access control (groupPolicy, per-group allowFrom),
   (5) configuring the bot (admin CLI, credentials),
   (6) troubleshooting Teams bot or service issues.
-  Config at ~/zylos/components/msteams/config.json. Service: pm2 zylos-msteams.
+  Config at ~/zylos/components/teams/config.json. Service: pm2 zylos-teams.
 type: communication
 
 lifecycle:
   npm: true
   service:
     type: pm2
-    name: zylos-msteams
+    name: zylos-teams
     entry: src/index.js
-  data_dir: ~/zylos/components/msteams
+  data_dir: ~/zylos/components/teams
   hooks:
     post-install: hooks/post-install.js
     pre-upgrade: hooks/pre-upgrade.js
@@ -39,7 +39,7 @@ config:
       description: "Azure Bot Registration App Password (client secret)"
       sensitive: true
 
-next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/msteams/api/messages. 4) Start the service (pm2 restart zylos-msteams)."
+next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/msteams/api/messages. 4) Start the service (pm2 restart zylos-teams)."
 
 http_routes:
   - path: /msteams/api/messages
@@ -61,14 +61,14 @@ Depends on: comm-bridge (C4 message routing).
 
 ```bash
 # Via C4 bridge (standard path — always use stdin form)
-cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "msteams" "<conversationId>|type:dm|user:<aadObjectId>"
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
 Hello!
 EOF
 ```
 
 Direct send (bypasses C4 logging, for testing only):
 ```bash
-node ~/zylos/.claude/skills/msteams/scripts/send.js "<endpoint>" "Hello!"
+node ~/zylos/.claude/skills/teams/scripts/send.js "<endpoint>" "Hello!"
 ```
 
 ## Admin CLI
@@ -76,7 +76,7 @@ node ~/zylos/.claude/skills/msteams/scripts/send.js "<endpoint>" "Hello!"
 Manage bot configuration via `admin.js`:
 
 ```bash
-ADM="node ~/zylos/.claude/skills/msteams/src/admin.js"
+ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
 
 # General
 $ADM show                                    # Show full config
@@ -96,13 +96,13 @@ $ADM remove-group <conversation_id>           # Remove a group
 $ADM set-group-policy <disabled|allowlist|open>  # Set group policy
 ```
 
-After changes, restart: `pm2 restart zylos-msteams`
+After changes, restart: `pm2 restart zylos-teams`
 
 ## Config Location
 
-- Config: `~/zylos/components/msteams/config.json`
-- Logs: `~/zylos/components/msteams/logs/`
-- Conversations: `~/zylos/components/msteams/conversations.json`
+- Config: `~/zylos/components/teams/config.json`
+- Logs: `~/zylos/components/teams/logs/`
+- Conversations: `~/zylos/components/teams/conversations.json`
 
 ## Azure Bot Setup
 
@@ -178,7 +178,7 @@ DM and group access are controlled by **independent** top-level policies:
 ## Service Management
 
 ```bash
-pm2 status zylos-msteams
-pm2 logs zylos-msteams
-pm2 restart zylos-msteams
+pm2 status zylos-teams
+pm2 logs zylos-teams
+pm2 restart zylos-teams
 ```

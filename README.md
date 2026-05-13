@@ -1,4 +1,4 @@
-# zylos-msteams
+# zylos-teams
 
 Microsoft Teams communication channel for the [Zylos](https://github.com/zylos-ai) AI agent ecosystem.
 
@@ -16,7 +16,7 @@ Receives messages from Microsoft Teams via Bot Framework and routes them to the 
 ## Installation
 
 ```bash
-zylos add msteams
+zylos add teams
 ```
 
 This will prompt for your Azure Bot credentials and set up the service.
@@ -36,7 +36,7 @@ MSTEAMS_TENANT_ID=your_tenant_id
 
 ### Runtime Config
 
-Config file: `~/zylos/components/msteams/config.json`
+Config file: `~/zylos/components/teams/config.json`
 
 ```json
 {
@@ -87,7 +87,7 @@ The first user to send a DM becomes the owner. The owner always bypasses all acc
 ## Admin CLI
 
 ```bash
-ADM="node ~/zylos/.claude/skills/msteams/src/admin.js"
+ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
 
 $ADM show                                    # Show config
 $ADM show-owner                              # Show owner
@@ -104,9 +104,9 @@ $ADM set-group-policy <disabled|allowlist|open>
 ## Service Management
 
 ```bash
-pm2 status zylos-msteams
-pm2 logs zylos-msteams
-pm2 restart zylos-msteams
+pm2 status zylos-teams
+pm2 logs zylos-teams
+pm2 restart zylos-teams
 ```
 
 ## License

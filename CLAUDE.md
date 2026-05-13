@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Development guidelines for zylos-msteams.
+Development guidelines for zylos-teams.
 
 ## Project Conventions
 
