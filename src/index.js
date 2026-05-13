@@ -37,10 +37,6 @@ try {
 console.log('[teams] Starting...');
 console.log(`[teams] Data directory: ${DATA_DIR}`);
 
-const LOGS_DIR = path.join(DATA_DIR, 'logs');
-const MEDIA_DIR = path.join(DATA_DIR, 'media');
-fs.mkdirSync(LOGS_DIR, { recursive: true });
-fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
 // Message deduplication
 const messageDeduper = createMessageDeduper({

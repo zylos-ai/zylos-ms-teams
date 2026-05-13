@@ -4,8 +4,6 @@
  *
  * Usage:
  *   ./send.js <endpoint> "message text"
- *   ./send.js <endpoint> "[MEDIA:image]/path/to/image.png"
- *   ./send.js <endpoint> "[MEDIA:file]/path/to/document.pdf"
  *
  * Exit codes:
  *   0 - Success
@@ -24,8 +22,6 @@ const MAX_LENGTH = 4000;
 const args = process.argv.slice(2);
 if (args.length < 2) {
   console.error('Usage: send.js <endpoint> <message>');
-  console.error('       send.js <endpoint> "[MEDIA:image]/path/to/image.png"');
-  console.error('       send.js <endpoint> "[MEDIA:file]/path/to/file.pdf"');
   process.exit(1);
 }
 
@@ -60,8 +56,6 @@ if (!config.enabled) {
   console.error('Error: teams is disabled in config');
   process.exit(1);
 }
-
-const mediaMatch = message.match(/^\[MEDIA:(\w+)\](.+)$/);
 
 function splitMessage(text, maxLength) {
   if (text.length <= maxLength) return [text];
@@ -187,25 +181,9 @@ async function sendText(text) {
   }
 }
 
-async function sendMedia(type, filePath) {
-  const trimmedPath = filePath.trim();
-  const { conversationId } = parsedEndpoint;
-
-  // TODO: Implement media upload via Microsoft Graph API
-  // For now, send a text message with the file path as a placeholder
-  const label = type === 'image' ? '[image]' : `[file: ${path.basename(trimmedPath)}]`;
-  console.warn(`[teams] Media upload not yet implemented. Sending text placeholder for: ${trimmedPath}`);
-  await sendViaInternal(conversationId, `${label} (media upload not yet supported)`);
-}
-
 async function send() {
   try {
-    if (mediaMatch) {
-      const [, mediaType, mediaPath] = mediaMatch;
-      await sendMedia(mediaType, mediaPath);
-    } else {
-      await sendText(message);
-    }
+    await sendText(message);
     console.log('Message sent successfully');
     process.exit(0);
   } catch (err) {
