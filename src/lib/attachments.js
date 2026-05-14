@@ -478,6 +478,15 @@ function buildGraphMessageUrls({ conversationType, conversationId, activity }) {
   );
 }
 
+export {
+  safeHostname, isUrlAllowed, isAuthAllowed,
+  isBotFrameworkPersonalChatId,
+  encodeGraphShareId, isGraphSharedLinkUrl, tryBuildGraphSharesUrl,
+  normalizeServiceUrl, inferPlaceholder,
+  isDownloadableAttachment, isHtmlAttachment, extractHtmlContent, extractHtmlAttachmentIds,
+  resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
+};
+
 export async function resolveInboundMedia({ attachments, conversationType, conversationId, serviceUrl, activity }) {
   if (!Array.isArray(attachments) || attachments.length === 0) return [];
 

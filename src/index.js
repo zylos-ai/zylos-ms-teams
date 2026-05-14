@@ -25,6 +25,7 @@ import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/ht
 import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
+import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -200,14 +201,6 @@ function getGroupName(conversationId) {
   return groups[conversationId]?.name || conversationId;
 }
 
-// Determine conversation type from Teams activity
-function getConversationType(activity) {
-  const conversationType = activity.conversation?.conversationType;
-  if (conversationType === 'personal') return 'dm';
-  if (conversationType === 'groupChat') return 'group';
-  if (conversationType === 'channel') return 'channel';
-  return 'dm';
-}
 
 // Check if bot is mentioned in a group/channel message
 function isBotMentioned(activity) {
@@ -234,29 +227,6 @@ function stripBotMention(activity) {
   return text;
 }
 
-/**
- * Build structured endpoint string for C4.
- * Format: conversationId|type:dm|user:aadObjectId|msg:activityId
- */
-function buildEndpoint(conversationId, { type, aadObjectId, activityId } = {}) {
-  let endpoint = conversationId;
-  if (type) endpoint += `|type:${type}`;
-  if (aadObjectId) endpoint += `|user:${aadObjectId}`;
-  if (activityId) endpoint += `|msg:${activityId}`;
-  return endpoint;
-}
-
-/**
- * Parse C4 response from stdout.
- */
-function parseC4Response(stdout) {
-  if (!stdout) return null;
-  try {
-    return JSON.parse(stdout.trim());
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Send message to Claude via C4 (with 1 retry on unexpected failure).
@@ -321,38 +291,6 @@ function extractMessageContent(activity) {
   return activity.text || '';
 }
 
-function escapeXml(text) {
-  if (text === undefined || text === null) return '';
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/'/g, '&apos;')
-    .replace(/"/g, '&quot;');
-}
-
-/**
- * Format message for C4 using XML-structured tags.
- */
-function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock } = {}) {
-  const prefix = type === 'dm'
-    ? '[Teams DM]'
-    : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
-  const safeUserName = escapeXml(userName);
-  const safeText = escapeXml(text);
-
-  let content = `${prefix} ${safeUserName} said: `;
-  if (contextBlock) content += contextBlock;
-  content += `<current-message>\n${safeText}\n</current-message>`;
-
-  if (quotedReply) {
-    const safeQuotedFrom = escapeXml(quotedReply.quotedFrom);
-    const safeQuotedText = escapeXml(quotedReply.quotedText);
-    content += `\n<quoted-reply from="${safeQuotedFrom}">${safeQuotedText}</quoted-reply>`;
-  }
-
-  return content;
-}
 
 /**
  * Save a conversation reference with tenant ID.
