@@ -21,9 +21,10 @@ import { App, ExpressAdapter } from '@microsoft/teams.apps';
 import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
 import { saveConversationReference, getConversationReference } from './lib/conversation-store.js';
-import { htmlToText, extractQuotedReply } from './lib/html.js';
+import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, downloadHostedContent } from './lib/graph.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
+import { resolveInboundMedia } from './lib/attachments.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -303,6 +304,23 @@ function sendToC4(source, endpoint, content, onReject) {
   });
 }
 
+/**
+ * Extract the best message content from a Teams activity.
+ * When textFormat is "plain" and a text/html attachment exists,
+ * Teams put the rich content (links, lists) in the attachment.
+ * Also strips Skype Reply blockquotes (handled separately by extractQuotedReply).
+ */
+function extractMessageContent(activity) {
+  const htmlAtt = activity.attachments?.find(
+    a => a.contentType === 'text/html' && a.content
+  );
+  if (htmlAtt) {
+    const { html } = extractReplyBlockquote(htmlAtt.content);
+    return html;
+  }
+  return activity.text || '';
+}
+
 function escapeXml(text) {
   if (text === undefined || text === null) return '';
   return String(text)
@@ -379,8 +397,9 @@ async function handleMessage(ctx) {
   const conversationId = activity.conversation?.id || '';
   const convType = getConversationType(activity);
 
-  // Process HTML to plain text
-  const rawText = activity.text || '';
+  // Extract message content — Teams may send rich HTML as an attachment
+  // when textFormat is "plain" (links, lists, etc.)
+  const rawText = extractMessageContent(activity);
   const text = htmlToText(rawText);
 
   // Extract quoted reply if present
@@ -397,16 +416,14 @@ async function handleMessage(ctx) {
     text,
   });
 
-  // Check for image attachments
-  let mediaPath = null;
-  if (isGraphEnabled() && activity.attachments?.length) {
-    for (const att of activity.attachments) {
-      if (att.contentType?.startsWith('image/') && att.contentUrl) {
-        mediaPath = await downloadHostedContent(att.contentUrl, att.name || 'image.png');
-        if (mediaPath) break;
-      }
-    }
-  }
+  // Download attachments (images, files, documents) using 3-tier strategy
+  const mediaFiles = await resolveInboundMedia({
+    attachments: activity.attachments,
+    conversationType: convType,
+    conversationId,
+    serviceUrl: activity.serviceUrl,
+    activity,
+  });
 
   const endpoint = buildEndpoint(conversationId, {
     type: convType,
@@ -434,7 +451,7 @@ async function handleMessage(ctx) {
     }
 
     let msg = formatMessage('dm', senderName, text, { quotedReply });
-    if (mediaPath) msg += ` ---- file: ${escapeXml(mediaPath)}`;
+    for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
@@ -481,7 +498,9 @@ async function handleMessage(ctx) {
       // Owner in non-allowed group without mention: process as owner override
     }
 
-    const cleanText = htmlToText(stripBotMention(activity));
+    const groupRaw = extractMessageContent(activity);
+    const groupActivity = { ...activity, text: groupRaw };
+    const cleanText = htmlToText(stripBotMention(groupActivity));
     const groupName = getGroupName(conversationId);
 
     // Build group context from in-memory history + optional Graph API fetch
@@ -512,7 +531,7 @@ async function handleMessage(ctx) {
 
     const contextBlock = formatContextBlock(contextMessages);
     let msg = formatMessage(convType, senderName, cleanText, { groupName, quotedReply, contextBlock });
-    if (mediaPath) msg += ` ---- file: ${escapeXml(mediaPath)}`;
+    for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }

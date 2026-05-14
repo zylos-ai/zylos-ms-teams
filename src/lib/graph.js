@@ -5,31 +5,33 @@ import { getCredentials, DATA_DIR } from './config.js';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
+const BOT_SCOPE = 'https://api.botframework.com/.default';
 
-const MEDIA_DIR = path.join(DATA_DIR, 'media');
+export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
-let cachedToken = null;
-let tokenExpiresAt = 0;
+// Per-scope token cache: { token, expiresAt }
+const tokenCache = new Map();
 
 export function isGraphEnabled() {
   const creds = getCredentials();
   return !!(creds.appId && creds.appPassword && creds.tenantId);
 }
 
-async function acquireToken() {
+export async function acquireTokenForScope(scope) {
   const creds = getCredentials();
-  if (!creds.tenantId) throw new Error('MSTEAMS_TENANT_ID required for Graph API');
+  if (!creds.tenantId) throw new Error('MSTEAMS_TENANT_ID required for token acquisition');
 
   const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt - 60_000) {
-    return cachedToken;
+  const cached = tokenCache.get(scope);
+  if (cached && now < cached.expiresAt - 60_000) {
+    return cached.token;
   }
 
   const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
   const body = new URLSearchParams({
     client_id: creds.appId,
     client_secret: creds.appPassword,
-    scope: GRAPH_SCOPE,
+    scope,
     grant_type: 'client_credentials',
   });
 
@@ -45,9 +47,19 @@ async function acquireToken() {
   }
 
   const data = await res.json();
-  cachedToken = data.access_token;
-  tokenExpiresAt = now + (data.expires_in * 1000);
-  return cachedToken;
+  tokenCache.set(scope, {
+    token: data.access_token,
+    expiresAt: now + (data.expires_in * 1000),
+  });
+  return data.access_token;
+}
+
+function acquireToken() {
+  return acquireTokenForScope(GRAPH_SCOPE);
+}
+
+function acquireBotToken() {
+  return acquireTokenForScope(BOT_SCOPE);
 }
 
 async function graphRequest(urlPath, options = {}) {
@@ -172,9 +184,21 @@ export async function downloadHostedContent(contentUrl, filename) {
   try {
     fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
-    const res = await graphRequest(contentUrl, {
-      headers: { Accept: '*/*' },
+    // Bot Framework service URLs need a bot-scoped token, not Graph
+    const isGraphUrl = contentUrl.includes('graph.microsoft.com');
+    const token = isGraphUrl ? await acquireToken() : await acquireBotToken();
+
+    const res = await fetch(contentUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: '*/*',
+      },
     });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Download error (${res.status}): ${text}`);
+    }
 
     const buffer = Buffer.from(await res.arrayBuffer());
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
