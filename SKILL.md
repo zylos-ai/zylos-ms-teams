@@ -20,6 +20,7 @@ lifecycle:
     entry: src/index.js
   data_dir: ~/zylos/components/teams
   hooks:
+    configure: hooks/configure.js
     post-install: hooks/post-install.js
     pre-upgrade: hooks/pre-upgrade.js
     post-upgrade: hooks/post-upgrade.js
