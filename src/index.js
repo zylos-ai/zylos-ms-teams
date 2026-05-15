@@ -20,10 +20,10 @@ import { App, ExpressAdapter } from '@microsoft/teams.apps';
 
 import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
-import { saveConversationReference, getConversationReference } from './lib/conversation-store.js';
+import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, fetchChatMembers, fetchChatInfo, fetchUserProfile } from './lib/graph.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 
@@ -92,65 +92,6 @@ function formatContextBlock(messages) {
   return `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
 }
 
-// Cached group metadata (members, chat info, user profiles)
-const memberCache = new Map();
-const chatInfoCache = new Map();
-const userProfileCache = new Map();
-
-async function getCachedMembers(chatId) {
-  if (memberCache.has(chatId)) return memberCache.get(chatId);
-  if (!isGraphEnabled()) return [];
-  try {
-    const members = await fetchChatMembers(chatId);
-    memberCache.set(chatId, members);
-    return members;
-  } catch (err) {
-    console.warn(`[teams] fetchChatMembers failed: ${err.message}`);
-    return [];
-  }
-}
-
-async function getCachedChatInfo(chatId) {
-  if (chatInfoCache.has(chatId)) return chatInfoCache.get(chatId);
-  if (!isGraphEnabled()) return null;
-  try {
-    const info = await fetchChatInfo(chatId);
-    if (info) chatInfoCache.set(chatId, info);
-    return info;
-  } catch (err) {
-    console.warn(`[teams] fetchChatInfo failed: ${err.message}`);
-    return null;
-  }
-}
-
-async function getCachedUserProfile(aadObjectId) {
-  if (!aadObjectId) return null;
-  if (userProfileCache.has(aadObjectId)) return userProfileCache.get(aadObjectId);
-  if (!isGraphEnabled()) return null;
-  try {
-    const profile = await fetchUserProfile(aadObjectId);
-    if (profile) userProfileCache.set(aadObjectId, profile);
-    return profile;
-  } catch (err) {
-    console.warn(`[teams] fetchUserProfile failed: ${err.message}`);
-    return null;
-  }
-}
-
-function formatMembersBlock(members) {
-  if (!members || members.length === 0) return '';
-  const entries = members.map(m => {
-    const role = m.roles?.includes('owner') ? ' (owner)' : m.roles?.includes('guest') ? ' (guest)' : '';
-    return `${escapeXml(m.displayName || 'unknown')}${role}`;
-  });
-  return `<group-members>\n${entries.join(', ')}\n</group-members>\n\n`;
-}
-
-function formatSenderDetail(profile) {
-  if (!profile) return '';
-  const parts = [profile.jobTitle, profile.department].filter(Boolean);
-  return parts.join(', ');
-}
 
 // Load configuration
 let config = getConfig();
@@ -391,6 +332,11 @@ async function handleMessage(ctx) {
   // Save conversation reference for proactive messaging
   saveConvRef(activity, ctx.ref);
 
+  // Send typing indicator immediately (best-effort)
+  try {
+    await teamsApp.send(activity.conversation?.id, { type: 'typing' });
+  } catch {}
+
   const senderAadObjectId = activity.from?.aadObjectId || '';
   const senderName = activity.from?.name || 'unknown';
   const conversationId = activity.conversation?.id || '';
@@ -538,18 +484,8 @@ async function handleMessage(ctx) {
 
     const contextBlock = formatContextBlock(contextMessages);
 
-    // Fetch enrichment data (all cached after first call)
-    const [members, chatInfo, senderProfile] = await Promise.all([
-      getCachedMembers(conversationId),
-      getCachedChatInfo(conversationId),
-      getCachedUserProfile(senderAadObjectId),
-    ]);
-    const membersBlock = formatMembersBlock(members);
-    const chatTopic = chatInfo?.topic || null;
-    const senderDetail = formatSenderDetail(senderProfile);
-
     let msg = formatMessage(convType, senderName, cleanText, {
-      groupName, quotedReply, contextBlock, membersBlock, chatTopic, senderDetail,
+      groupName, quotedReply, contextBlock,
     });
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
@@ -571,21 +507,68 @@ teamsApp.on('message', async (ctx) => {
   }
 });
 
-// Handle conversation update (bot added to conversation)
+// Handle conversation update (bot added/removed from conversation)
 teamsApp.on('conversationUpdate', async (ctx) => {
   try {
     const activity = ctx.activity;
     const conversationId = activity.conversation?.id || '';
+    const convType = getConversationType(activity);
     const membersAdded = activity.membersAdded || [];
-    const membersRemoved = activity.membersRemoved || [];
+
     for (const member of membersAdded) {
-      if (member.id === activity.recipient?.id) {
-        console.log(`[teams] Bot added to conversation: ${conversationId}`);
-        saveConvRef(activity, ctx.ref);
+      if (member.id !== activity.recipient?.id) continue;
+
+      console.log(`[teams] Bot added to conversation: ${conversationId}`);
+      saveConvRef(activity, ctx.ref);
+
+      // Auto-add handling for group chats
+      if (convType === 'group' || convType === 'channel') {
+        const adderAadId = activity.from?.aadObjectId || '';
+        const adderName = activity.from?.name || 'unknown';
+
+        if (isOwner(adderAadId)) {
+          // Owner added bot → auto-approve group
+          if (!config.groups) config.groups = {};
+          if (!config.groups[conversationId]) {
+            const chatTitle = activity.conversation?.name || 'group';
+            config.groups[conversationId] = {
+              name: chatTitle,
+              allowFrom: [],
+              added_at: new Date().toISOString(),
+            };
+            saveConfig(config);
+            console.log(`[teams] Auto-approved group: ${chatTitle} (added by owner)`);
+            try {
+              await ctx.send(`Group added. Members can @mention me to chat.`);
+            } catch {}
+          }
+        } else {
+          // Non-owner added bot → pending approval, notify owner
+          console.log(`[teams] Bot added by non-owner ${adderName} (${adderAadId}), pending approval`);
+          try {
+            await ctx.send('Bot joined, but requires admin approval to respond.');
+          } catch {}
+          // Notify owner via DM if we have their conversation reference
+          if (config.owner?.aadObjectId) {
+            const chatTitle = activity.conversation?.name || conversationId;
+            const notifyMsg = `Bot was added to a group, pending approval:\nGroup: ${chatTitle}\nID: ${conversationId}\nAdded by: ${adderName}\n\nTo approve, run:\nzylos-teams add-group "${conversationId}" "${chatTitle}"`;
+            const allRefs = getAllConversationReferences();
+            const ownerDmRef = Object.entries(allRefs).find(([id, ref]) =>
+              id.startsWith('a:') && ref.user?.aadObjectId === config.owner.aadObjectId
+            );
+            if (ownerDmRef) {
+              try {
+                await teamsApp.send(ownerDmRef[0], { type: 'message', text: notifyMsg });
+                console.log(`[teams] Notified owner about pending group: ${chatTitle}`);
+              } catch (err) {
+                console.warn(`[teams] Failed to notify owner: ${err.message}`);
+              }
+            } else {
+              console.log(`[teams] No owner DM reference found. Pending group: ${chatTitle} (${conversationId})`);
+            }
+          }
+        }
       }
-    }
-    if ((membersAdded.length > 0 || membersRemoved.length > 0) && conversationId) {
-      memberCache.delete(conversationId);
     }
   } catch (err) {
     console.error(`[teams] Error handling conversationUpdate: ${err.message}`);
@@ -606,7 +589,7 @@ expressApp.post('/internal/send', async (req, res) => {
     return res.status(403).json({ error: 'unauthorized' });
   }
 
-  const { conversationId, text, type } = req.body || {};
+  const { conversationId, text, type, replyToId } = req.body || {};
   if (!conversationId || !text) {
     return res.status(400).json({ error: 'missing conversationId or text' });
   }
@@ -617,8 +600,19 @@ expressApp.post('/internal/send', async (req, res) => {
       return res.status(404).json({ error: 'no conversation reference found' });
     }
 
-    // Use the App's send method for proactive messaging
-    await teamsApp.send(conversationId, { type: 'message', text });
+    const activity = { type: 'message', text, textFormat: 'markdown' };
+    if (replyToId) activity.replyToId = replyToId;
+
+    await teamsApp.send(conversationId, activity);
+
+    // Record bot's outgoing message in group context
+    recordHistoryEntry(conversationId, {
+      timestamp: new Date().toISOString(),
+      message_id: `bot:${Date.now()}`,
+      user_id: 'bot',
+      user_name: botName,
+      text: text.substring(0, 500),
+    });
 
     res.json({ ok: true });
   } catch (err) {

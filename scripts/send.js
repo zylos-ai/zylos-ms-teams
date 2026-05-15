@@ -128,40 +128,56 @@ function readInternalToken() {
   }
 }
 
-async function sendViaInternal(conversationId, text) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sendViaInternal(conversationId, text, { replyToId } = {}) {
   const internalToken = readInternalToken();
   if (!internalToken) {
     throw new Error('Internal token not found. Is the teams service running?');
   }
 
   const port = config.port || 3978;
-  const body = JSON.stringify({
+  const payload = {
     conversationId,
     text,
     type: parsedEndpoint.type || 'dm'
-  });
+  };
+  if (replyToId) payload.replyToId = replyToId;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/internal/send`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Token': internalToken
-      },
-      body,
-      signal: controller.signal
-    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/internal/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Token': internalToken
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
 
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || `HTTP ${response.status}`);
+      if (response.status === 429 && attempt < maxRetries) {
+        const retryAfter = parseInt(response.headers.get('retry-after') || '5', 10);
+        console.warn(`[teams] Rate limited, retrying in ${retryAfter}s`);
+        clearTimeout(timeout);
+        await sleep(retryAfter * 1000);
+        continue;
+      }
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+      return result;
+    } finally {
+      clearTimeout(timeout);
     }
-    return result;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -193,38 +209,53 @@ async function sendMedia(mediaType, filePath) {
     type: parsedEndpoint.type || 'dm'
   });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
 
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/internal/send-media`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Token': internalToken
-      },
-      body,
-      signal: controller.signal
-    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/internal/send-media`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Token': internalToken
+        },
+        body,
+        signal: controller.signal
+      });
 
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || `HTTP ${response.status}`);
+      if (response.status === 429 && attempt < maxRetries) {
+        const retryAfter = parseInt(response.headers.get('retry-after') || '5', 10);
+        console.warn(`[teams] Rate limited on media send, retrying in ${retryAfter}s`);
+        clearTimeout(timeout);
+        await sleep(retryAfter * 1000);
+        continue;
+      }
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+      return result;
+    } finally {
+      clearTimeout(timeout);
     }
-    return result;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
 async function sendText(text) {
   const chunks = splitMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
+  const triggerMsgId = parsedEndpoint.msg || null;
 
   for (let i = 0; i < chunks.length; i++) {
-    await sendViaInternal(conversationId, chunks[i]);
+    const opts = {};
+    // Reply-to: first chunk chains to trigger message
+    if (i === 0 && triggerMsgId) opts.replyToId = triggerMsgId;
+    await sendViaInternal(conversationId, chunks[i], opts);
     if (i < chunks.length - 1) {
-      await new Promise(r => setTimeout(r, 500));
+      await sleep(500);
     }
   }
 

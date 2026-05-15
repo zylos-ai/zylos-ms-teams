@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-15
+
+### Added
+- Typing indicator on message receipt
+- Reply-to threading (outbound messages chain to trigger message via replyToId)
+- Rate limit retry (429 handling with Retry-After for text and media sends)
+- Auto-add group handling (owner adds → auto-approve, non-owner → pending + DM notification)
+- Outbound markdown formatting (textFormat: 'markdown')
+- Bot context recording (outgoing messages appear in group context)
+- RSC permission `ChatMessage.Read.Chat` in manifest (for future smart mode)
+
+### Changed
+- Manifest version bumped to 1.2.0
+- Removed unused Graph enrichment functions (fetchChatMembers, fetchChatInfo, fetchUserProfile)
+- Reverted GC enrichment (member list, chat topic, sender details) — group context now only includes last N messages
+
 ## [0.2.0] - 2026-05-13
 
 ### Added

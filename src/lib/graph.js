@@ -96,29 +96,6 @@ function toGraphChatId(conversationId) {
   return conversationId;
 }
 
-export async function fetchChatInfo(conversationId) {
-  if (!isGraphEnabled()) return null;
-  const chatId = toGraphChatId(conversationId);
-  const encoded = encodeURIComponent(chatId);
-  const data = await graphRequest(`/chats/${encoded}?$select=id,topic,chatType,createdDateTime`);
-  return {
-    topic: data.topic || null,
-    chatType: data.chatType || 'group',
-    createdDateTime: data.createdDateTime || null,
-  };
-}
-
-export async function fetchUserProfile(userId) {
-  if (!isGraphEnabled()) return null;
-  const encoded = encodeURIComponent(userId);
-  const data = await graphRequest(`/users/${encoded}?$select=displayName,jobTitle,department`);
-  return {
-    displayName: data.displayName || null,
-    jobTitle: data.jobTitle || null,
-    department: data.department || null,
-  };
-}
-
 /**
  * Fetch recent messages from a chat (DM or group chat).
  * Returns messages in chronological order (oldest first).
@@ -232,24 +209,6 @@ export async function downloadHostedContent(contentUrl, filename) {
     console.error(`[teams/graph] Failed to download hosted content: ${err.message}`);
     return null;
   }
-}
-
-/**
- * Fetch members of a chat.
- */
-export async function fetchChatMembers(conversationId) {
-  if (!isGraphEnabled()) return [];
-
-  const chatId = toGraphChatId(conversationId);
-  const encoded = encodeURIComponent(chatId);
-
-  const data = await graphRequest(`/chats/${encoded}/members`);
-  return (data.value || []).map(m => ({
-    displayName: m.displayName || 'unknown',
-    userId: m.userId || '',
-    email: m.email || '',
-    roles: m.roles || [],
-  }));
 }
 
 /**

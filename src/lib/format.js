@@ -33,17 +33,14 @@ export function getConversationType(activity) {
   return 'dm';
 }
 
-export function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock, membersBlock, chatTopic, senderDetail } = {}) {
-  const topicSuffix = chatTopic ? ` (${escapeXml(chatTopic)})` : '';
+export function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock } = {}) {
   const prefix = type === 'dm'
     ? '[Teams DM]'
-    : `[Teams GROUP:${escapeXml(groupName || 'unknown')}${topicSuffix}]`;
-  const detailSuffix = senderDetail ? ` (${escapeXml(senderDetail)})` : '';
+    : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
   const safeUserName = escapeXml(userName);
   const safeText = escapeXml(text);
 
-  let content = `${prefix} ${safeUserName}${detailSuffix} said: `;
-  if (membersBlock) content += membersBlock;
+  let content = `${prefix} ${safeUserName} said: `;
   if (contextBlock) content += contextBlock;
   content += `<current-message>\n${safeText}\n</current-message>`;
 
