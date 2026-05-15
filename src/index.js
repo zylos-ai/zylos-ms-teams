@@ -23,7 +23,7 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, fetchChatMembers, fetchChatInfo, fetchUserProfile } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 
@@ -90,6 +90,66 @@ function formatContextBlock(messages) {
   if (!messages || messages.length === 0) return '';
   const lines = messages.map(m => `[${escapeXml(m.user_name || m.user_id)}]: ${escapeXml(m.text)}`);
   return `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
+}
+
+// Cached group metadata (members, chat info, user profiles)
+const memberCache = new Map();
+const chatInfoCache = new Map();
+const userProfileCache = new Map();
+
+async function getCachedMembers(chatId) {
+  if (memberCache.has(chatId)) return memberCache.get(chatId);
+  if (!isGraphEnabled()) return [];
+  try {
+    const members = await fetchChatMembers(chatId);
+    memberCache.set(chatId, members);
+    return members;
+  } catch (err) {
+    console.warn(`[teams] fetchChatMembers failed: ${err.message}`);
+    return [];
+  }
+}
+
+async function getCachedChatInfo(chatId) {
+  if (chatInfoCache.has(chatId)) return chatInfoCache.get(chatId);
+  if (!isGraphEnabled()) return null;
+  try {
+    const info = await fetchChatInfo(chatId);
+    if (info) chatInfoCache.set(chatId, info);
+    return info;
+  } catch (err) {
+    console.warn(`[teams] fetchChatInfo failed: ${err.message}`);
+    return null;
+  }
+}
+
+async function getCachedUserProfile(aadObjectId) {
+  if (!aadObjectId) return null;
+  if (userProfileCache.has(aadObjectId)) return userProfileCache.get(aadObjectId);
+  if (!isGraphEnabled()) return null;
+  try {
+    const profile = await fetchUserProfile(aadObjectId);
+    if (profile) userProfileCache.set(aadObjectId, profile);
+    return profile;
+  } catch (err) {
+    console.warn(`[teams] fetchUserProfile failed: ${err.message}`);
+    return null;
+  }
+}
+
+function formatMembersBlock(members) {
+  if (!members || members.length === 0) return '';
+  const entries = members.map(m => {
+    const role = m.roles?.includes('owner') ? ' (owner)' : m.roles?.includes('guest') ? ' (guest)' : '';
+    return `${escapeXml(m.displayName || 'unknown')}${role}`;
+  });
+  return `<group-members>\n${entries.join(', ')}\n</group-members>\n\n`;
+}
+
+function formatSenderDetail(profile) {
+  if (!profile) return '';
+  const parts = [profile.jobTitle, profile.department].filter(Boolean);
+  return parts.join(', ');
 }
 
 // Load configuration
@@ -202,15 +262,18 @@ function getGroupName(conversationId) {
 }
 
 
+// Teams mention entities use channel-specific IDs (e.g. "28:appId") rather than raw app IDs
+function isBotMention(entity) {
+  if (entity.type !== 'mention') return false;
+  const mentionedId = String(entity.mentioned?.id || '');
+  if (!mentionedId) return false;
+  return mentionedId === botId || mentionedId.endsWith(`:${botId}`);
+}
+
 // Check if bot is mentioned in a group/channel message
 function isBotMentioned(activity) {
   if (!activity.entities) return false;
-  return activity.entities.some(entity => {
-    if (entity.type !== 'mention') return false;
-    const mentionedId = entity.mentioned?.id;
-    if (!mentionedId) return false;
-    return String(mentionedId) === String(botId);
-  });
+  return activity.entities.some(isBotMention);
 }
 
 // Strip bot @mention from message text
@@ -218,9 +281,7 @@ function stripBotMention(activity) {
   let text = activity.text || '';
   if (!activity.entities) return text;
   for (const entity of activity.entities) {
-    if (entity.type !== 'mention') continue;
-    const mentionedId = entity.mentioned?.id;
-    if (String(mentionedId) === String(botId) && entity.text) {
+    if (isBotMention(entity) && entity.text) {
       text = text.replace(entity.text, '').trim();
     }
   }
@@ -345,15 +406,17 @@ async function handleMessage(ctx) {
 
   console.log(`[teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
-  // Record in chat history (for group context)
+  // Record in chat history (for group context), with bot mention stripped
+  const historyText = htmlToText(stripBotMention(activity));
   recordHistoryEntry(conversationId, {
     timestamp: activity.timestamp || new Date().toISOString(),
     message_id: activityId,
     user_id: senderAadObjectId,
     user_name: senderName,
-    text,
+    text: historyText,
   });
 
+  // Debug: log raw attachments and full activity structure
   // Download attachments (images, files, documents) using 3-tier strategy
   const mediaFiles = await resolveInboundMedia({
     attachments: activity.attachments,
@@ -438,7 +501,13 @@ async function handleMessage(ctx) {
 
     const groupRaw = extractMessageContent(activity);
     const groupActivity = { ...activity, text: groupRaw };
-    const cleanText = htmlToText(stripBotMention(groupActivity));
+    let cleanText = htmlToText(stripBotMention(groupActivity));
+    // Fallback: HTML attachments use <span> for mentions instead of <at>,
+    // so entity.text replacement may fail. Strip by display name after htmlToText.
+    const botMentionEntity = activity.entities?.find(e => isBotMention(e));
+    if (botMentionEntity?.mentioned?.name && cleanText.startsWith(botMentionEntity.mentioned.name)) {
+      cleanText = cleanText.slice(botMentionEntity.mentioned.name.length).trim();
+    }
     const groupName = getGroupName(conversationId);
 
     // Build group context from in-memory history + optional Graph API fetch
@@ -468,7 +537,20 @@ async function handleMessage(ctx) {
     }
 
     const contextBlock = formatContextBlock(contextMessages);
-    let msg = formatMessage(convType, senderName, cleanText, { groupName, quotedReply, contextBlock });
+
+    // Fetch enrichment data (all cached after first call)
+    const [members, chatInfo, senderProfile] = await Promise.all([
+      getCachedMembers(conversationId),
+      getCachedChatInfo(conversationId),
+      getCachedUserProfile(senderAadObjectId),
+    ]);
+    const membersBlock = formatMembersBlock(members);
+    const chatTopic = chatInfo?.topic || null;
+    const senderDetail = formatSenderDetail(senderProfile);
+
+    let msg = formatMessage(convType, senderName, cleanText, {
+      groupName, quotedReply, contextBlock, membersBlock, chatTopic, senderDetail,
+    });
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
@@ -493,12 +575,17 @@ teamsApp.on('message', async (ctx) => {
 teamsApp.on('conversationUpdate', async (ctx) => {
   try {
     const activity = ctx.activity;
+    const conversationId = activity.conversation?.id || '';
     const membersAdded = activity.membersAdded || [];
+    const membersRemoved = activity.membersRemoved || [];
     for (const member of membersAdded) {
       if (member.id === activity.recipient?.id) {
-        console.log(`[teams] Bot added to conversation: ${activity.conversation?.id}`);
+        console.log(`[teams] Bot added to conversation: ${conversationId}`);
         saveConvRef(activity, ctx.ref);
       }
+    }
+    if ((membersAdded.length > 0 || membersRemoved.length > 0) && conversationId) {
+      memberCache.delete(conversationId);
     }
   } catch (err) {
     console.error(`[teams] Error handling conversationUpdate: ${err.message}`);

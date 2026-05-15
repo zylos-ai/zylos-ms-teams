@@ -47,33 +47,46 @@ export function htmlToText(html) {
   // Normalize line endings
   text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-  // Block-level elements that should produce line breaks
-  // Insert newlines before/after block elements
-  text = text.replace(/<\/(?:p|div|blockquote|h[1-6]|pre|ul|ol)>/gi, '\n');
-  text = text.replace(/<(?:p|div|blockquote|h[1-6]|pre|ul|ol)(?:\s[^>]*)?>/gi, '\n');
+  // --- Process structured elements BEFORE generic block-level stripping ---
+
+  // <pre><code>...</code></pre> -> preserve content with backticks
+  text = text.replace(/<pre(?:\s[^>]*)?>\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, code) => {
+    return '\n```\n' + code.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '') + '\n```\n';
+  });
+
+  // <pre>...</pre> -> preserve content
+  text = text.replace(/<pre(?:\s[^>]*)?>([\s\S]*?)<\/pre>/gi, (_, code) => {
+    return '\n```\n' + code.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '') + '\n```\n';
+  });
+
+  // Numbered lists: replace <li> inside <ol> with 1. 2. 3. format
+  text = text.replace(/<ol(?:\s[^>]*)?>([\s\S]*?)<\/ol>/gi, (_, inner) => {
+    let i = 0;
+    return '\n' + inner.replace(/<li(?:\s[^>]*)?>/gi, () => `\n${++i}. `).replace(/<\/li>/gi, '');
+  });
+
+  // Bulleted lists: <li> inside <ul> -> "- "
+  text = text.replace(/<ul(?:\s[^>]*)?>([\s\S]*?)<\/ul>/gi, (_, inner) => {
+    return '\n' + inner.replace(/<li(?:\s[^>]*)?>/gi, '\n- ').replace(/<\/li>/gi, '');
+  });
+
+  // Standalone <li> (not inside ol/ul) -> "- "
+  text = text.replace(/<li(?:\s[^>]*)?>/gi, '\n- ');
+  text = text.replace(/<\/li>/gi, '');
+
+  // --- Generic block-level stripping (ol/ul/pre already processed above) ---
+
+  text = text.replace(/<\/(?:p|div|blockquote|h[1-6])>/gi, '\n');
+  text = text.replace(/<(?:p|div|blockquote|h[1-6])(?:\s[^>]*)?>/gi, '\n');
 
   // <br> and <br/>
   text = text.replace(/<br\s*\/?>/gi, '\n');
-
-  // <li> -> bullet point
-  text = text.replace(/<li(?:\s[^>]*)?>/gi, '\n- ');
-  text = text.replace(/<\/li>/gi, '');
 
   // <a href="url">text</a> -> text (url)
   text = text.replace(/<a\s+[^>]*href=["']([^"']*)["'][^>]*>(.*?)<\/a>/gi, (_, href, linkText) => {
     const cleanLink = linkText.replace(/<[^>]+>/g, '').trim();
     if (!cleanLink || cleanLink === href) return href;
     return `${cleanLink} (${href})`;
-  });
-
-  // <pre><code>...</code></pre> -> preserve content with backticks
-  text = text.replace(/<pre(?:\s[^>]*)?>\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, code) => {
-    return '\n```\n' + code.replace(/<[^>]+>/g, '') + '\n```\n';
-  });
-
-  // <pre>...</pre> -> preserve content
-  text = text.replace(/<pre(?:\s[^>]*)?>([\s\S]*?)<\/pre>/gi, (_, code) => {
-    return '\n```\n' + code.replace(/<[^>]+>/g, '') + '\n```\n';
   });
 
   // Inline <code>...</code>
@@ -85,6 +98,9 @@ export function htmlToText(html) {
 
   // <at>...</at> — Teams mention tags, keep inner text
   text = text.replace(/<at(?:\s[^>]*)?>(.*?)<\/at>/gi, '$1');
+
+  // Emoji tags: <emoji alt="😢"> or <img alt="😢" ...> — extract alt text
+  text = text.replace(/<(?:emoji|img)\s+[^>]*alt=["']([^"']+)["'][^>]*\/?>/gi, '$1');
 
   // Strip all remaining HTML tags
   text = text.replace(/<[^>]+>/g, '');
@@ -151,4 +167,18 @@ export function extractQuotedReply(activity) {
 
 function tryParseJson(str) {
   try { return JSON.parse(str); } catch { return null; }
+}
+
+/**
+ * Extract and remove Skype Reply blockquote from HTML content.
+ * Teams wraps quoted replies in <blockquote itemtype="http://schema.skype.com/Reply">.
+ */
+export function extractReplyBlockquote(html) {
+  if (!html) return { html: '', quote: null };
+  const match = html.match(/<blockquote[^>]*itemtype=["']http:\/\/schema\.skype\.com\/Reply["'][^>]*>[\s\S]*?<\/blockquote>/i);
+  if (!match) return { html, quote: null };
+  return {
+    html: html.replace(match[0], '').trim(),
+    quote: htmlToText(match[0]),
+  };
 }

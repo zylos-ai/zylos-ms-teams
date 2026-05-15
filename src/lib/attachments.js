@@ -487,6 +487,61 @@ export {
   resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
 };
 
+async function downloadGraphNearbyFiles({ conversationId, activity, tokenProvider }) {
+  let accessToken;
+  try {
+    accessToken = await tokenProvider(GRAPH_SCOPE);
+  } catch { return []; }
+  if (!accessToken) return [];
+
+  const chatId = (conversationId || '').trim();
+  if (!chatId) return [];
+
+  let messages;
+  try {
+    const url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=5&$orderby=createdDateTime desc`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) return [];
+    const data = await res.json();
+    messages = data.value || [];
+  } catch { return []; }
+
+  const senderAad = activity.from?.aadObjectId || '';
+  const activityTime = activity.timestamp ? new Date(activity.timestamp).getTime() : Date.now();
+
+  const out = [];
+  for (const msg of messages) {
+    if (msg.id === activity.id) continue;
+    const msgSenderAad = msg.from?.user?.id || '';
+    if (senderAad && msgSenderAad !== senderAad) continue;
+    const msgTime = msg.createdDateTime ? new Date(msg.createdDateTime).getTime() : 0;
+    if (Math.abs(activityTime - msgTime) > 60_000) continue;
+
+    const atts = Array.isArray(msg.attachments) ? msg.attachments : [];
+    for (const att of atts) {
+      if ((att.contentType || '').toLowerCase() !== 'reference' || !att.contentUrl) continue;
+      try {
+        const sharesUrl = `${GRAPH_BASE}/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`;
+        const res = await fetch(sharesUrl, {
+          redirect: 'follow',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!res.ok) continue;
+        const cl = res.headers.get('content-length');
+        if (cl && Number(cl) > MAX_MEDIA_BYTES) continue;
+        const buffer = Buffer.from(await res.arrayBuffer());
+        if (buffer.byteLength > MAX_MEDIA_BYTES || buffer.byteLength === 0) continue;
+        const name = att.name || 'file';
+        const mime = mimeFromHeaderAndName(res.headers.get('content-type'), name);
+        const savedPath = await saveBuffer(buffer, name);
+        out.push({ path: savedPath, contentType: mime, placeholder: inferPlaceholder(mime, name) });
+      } catch { /* skip failed downloads */ }
+    }
+    if (out.length > 0) break;
+  }
+  return out;
+}
+
 export async function resolveInboundMedia({ attachments, conversationType, conversationId, serviceUrl, activity }) {
   if (!Array.isArray(attachments) || attachments.length === 0) return [];
 
@@ -503,10 +558,14 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
 
   // Check if HTML contains <attachment> tags indicating embedded files
   const attachmentIds = extractHtmlAttachmentIds(attachments);
-  if (attachmentIds.length === 0) return [];
+
+  // In personal chats, <attachment> tags are the only signal for embedded files.
+  // In group/channel chats, Bot Framework omits file attachments entirely,
+  // so we must fall through to Tier 3 (Graph API) regardless.
+  if (attachmentIds.length === 0 && isBotFrameworkPersonalChatId(conversationId)) return [];
 
   // Tier 2: Bot Framework v3 endpoint (for DM conversations)
-  if (isBotFrameworkPersonalChatId(conversationId)) {
+  if (attachmentIds.length > 0 && isBotFrameworkPersonalChatId(conversationId)) {
     if (!serviceUrl) {
       console.debug('[teams/attachments] BF attachment skipped (missing serviceUrl)');
     } else {
@@ -531,6 +590,13 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
         console.log(`[teams/attachments] Tier 3 (Graph): downloaded ${media.length} file(s)`);
         return media;
       }
+    }
+
+    // Tier 3b: check nearby messages for file uploads sent separately from @mention
+    media = await downloadGraphNearbyFiles({ conversationId, activity, tokenProvider });
+    if (media.length > 0) {
+      console.log(`[teams/attachments] Tier 3b (Graph nearby): downloaded ${media.length} file(s)`);
+      return media;
     }
   }
 
