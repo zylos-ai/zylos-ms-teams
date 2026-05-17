@@ -1,10 +1,44 @@
-# zylos-teams
+<p align="center">
+  <img src="./assets/logo.png" alt="Zylos" height="120">
+</p>
 
-Microsoft Teams communication channel for the [Zylos](https://github.com/zylos-ai) AI agent ecosystem.
+<h1 align="center">zylos-teams</h1>
 
-Receives messages from Microsoft Teams via Bot Framework and routes them to the Zylos agent through the C4 communication bridge.
+<p align="center">
+  Microsoft Teams communication channel for <a href="https://github.com/zylos-ai/zylos-core">Zylos</a> agents.
+</p>
 
-## Prerequisites
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg" alt="Node.js"></a>
+  <a href="https://discord.gg/GS2J39EGff"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://x.com/ZylosAI"><img src="https://img.shields.io/badge/X-follow-000000?logo=x&logoColor=white" alt="X"></a>
+  <a href="https://zylos.ai"><img src="https://img.shields.io/badge/website-zylos.ai-blue" alt="Website"></a>
+  <a href="https://coco.xyz"><img src="https://img.shields.io/badge/Built%20by-Coco-orange" alt="Built by Coco"></a>
+</p>
+
+---
+
+- **Chat on Teams** — your AI agent lives in Microsoft Teams, supporting DMs and group conversations
+- **Smart group monitoring** — automatically follow designated group discussions, no @mention needed
+- **Voice messages** — audio messages transcribed via ASR and forwarded as text
+- **Zero-config start** — first DM auto-binds you as owner, no setup wizards
+
+## Getting Started
+
+Tell your Zylos agent:
+
+> "Install the teams component"
+
+Or use the CLI:
+
+```bash
+zylos add teams
+```
+
+Zylos will guide you through the setup, including obtaining Azure Bot Registration credentials. Once installed, message your bot on Teams — the first user to DM becomes the owner.
+
+### Prerequisites
 
 - Node.js 20+
 - An Azure Bot Registration with:
@@ -13,14 +47,6 @@ Receives messages from Microsoft Teams via Bot Framework and routes them to the 
   - Messaging endpoint configured to your server
 - Zylos core with comm-bridge (C4) installed
 
-## Installation
-
-```bash
-zylos add teams
-```
-
-This will prompt for your Azure Bot credentials and set up the service.
-
 ## Configuration
 
 ### Credentials
@@ -28,10 +54,26 @@ This will prompt for your Azure Bot credentials and set up the service.
 Add to `~/zylos/.env`:
 
 ```bash
+# Azure Bot Registration (required)
 MSTEAMS_APP_ID=your_microsoft_app_id
 MSTEAMS_APP_PASSWORD=your_microsoft_app_password
+
 # Optional: for single-tenant bots
 MSTEAMS_TENANT_ID=your_tenant_id
+
+# Optional: enables Graph API for chat history fallback
+MSTEAMS_GRAPH_TOKEN=your_graph_token
+```
+
+Get credentials from your Azure Bot Registration:
+- Azure Portal: [portal.azure.com](https://portal.azure.com) -> Bot Services
+
+### Messaging Endpoint
+
+In Azure Bot Registration, set the messaging endpoint to:
+
+```
+https://<your-domain>/teams/api/messages
 ```
 
 ### Runtime Config
@@ -54,12 +96,40 @@ Config file: `~/zylos/components/teams/config.json`
 }
 ```
 
-### Messaging Endpoint
+## Managing the Bot
 
-In Azure Bot Registration, set the messaging endpoint to:
+Just tell your Zylos agent what you need:
 
-```
-https://<your-domain>/teams/api/messages
+| Task | Example |
+|------|---------|
+| Add user to DM allowlist | "Add user X to teams DM allowlist" |
+| Enable smart group | "Set this Teams group to smart mode" |
+| Check status | "Show teams bot status" |
+| Restart bot | "Restart teams bot" |
+| Upgrade | "Upgrade teams component" |
+| Uninstall | "Uninstall teams component" |
+
+Or manage via admin CLI:
+
+```bash
+ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
+
+# General
+$ADM show                                    # Show full config
+$ADM show-owner                              # Show current owner
+
+# DM Access Control
+$ADM set-dm-policy <open|allowlist|owner>     # Set DM policy
+$ADM list-dm-allow                            # Show DM policy + allowFrom list
+$ADM add-dm-allow <aad_object_id>             # Add user to DM allowlist
+$ADM remove-dm-allow <aad_object_id>          # Remove user from DM allowlist
+
+# Group Management
+$ADM list-groups                              # List all configured groups
+$ADM add-group <conversation_id> <name>       # Add group
+$ADM remove-group <conversation_id>           # Remove a group
+$ADM set-group-policy <disabled|allowlist|open>
+$ADM set-group-mode <id> <mention|smart>      # Set group mode
 ```
 
 ## Access Control
@@ -68,47 +138,60 @@ https://<your-domain>/teams/api/messages
 
 Controls who can send direct messages to the bot:
 
-- `owner` (default) - Only the owner can DM
-- `allowlist` - Only users in `dmAllowFrom` can DM
-- `open` - Anyone can DM
+- `owner` (default) — Only the owner can DM
+- `allowlist` — Only users in `dmAllowFrom` can DM
+- `open` — Anyone can DM
 
 ### Group Policy
 
 Controls which groups/channels the bot responds in:
 
-- `allowlist` (default) - Only configured groups
-- `open` - All groups where bot is @mentioned
-- `disabled` - No group messages
+- `allowlist` (default) — Only configured groups
+- `open` — All groups where bot is @mentioned
+- `disabled` — No group messages
 
 ### Owner
 
 The first user to send a DM becomes the owner. The owner always bypasses all access control checks.
 
-## Admin CLI
+## Smart Mode
 
-```bash
-ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
+Groups can operate in two modes:
 
-$ADM show                                    # Show config
-$ADM show-owner                              # Show owner
-$ADM set-dm-policy <open|allowlist|owner>     # Set DM policy
-$ADM list-dm-allow                            # Show DM allowlist
-$ADM add-dm-allow <aad_object_id>             # Add user
-$ADM remove-dm-allow <aad_object_id>          # Remove user
-$ADM list-groups                              # List groups
-$ADM add-group <conversation_id> <name>       # Add group
-$ADM remove-group <conversation_id>           # Remove group
-$ADM set-group-policy <disabled|allowlist|open>
-```
+- **mention** (default) — Bot only responds to @mentions
+- **smart** — Bot receives all messages; Claude decides whether to respond
 
-## Service Management
+In smart mode without @mention:
+- Typing indicator is suppressed
+- Attachments are not downloaded (metadata-only note appended)
+- Claude sees the full conversation and can choose to skip
 
-```bash
-pm2 status zylos-teams
-pm2 logs zylos-teams
-pm2 restart zylos-teams
-```
+## Group Chat Behavior
+
+| Scenario | Bot Response |
+|----------|--------------|
+| Private DM (owner/allowlisted) | Responds via Claude |
+| Smart group message | Receives all messages, Claude decides |
+| @mention in allowed group | Responds with recent context |
+| Owner @mention in any group | Always responds |
+| Unknown user DM | Rejected with notice |
+
+## Voice Messages
+
+When `~/zylos/bin/transcribe` exists (voice-asr skill installed), audio attachments are transcribed and forwarded as `[Voice] <transcription>`. Works in both DMs and group chats.
+
+In smart mode, voice messages are always downloaded and transcribed even without @mention.
+
+## Documentation
+
+- [SKILL.md](./SKILL.md) — Component specification and usage reference
+- [CHANGELOG.md](./CHANGELOG.md) — Version history
+- [DESIGN.md](./DESIGN.md) — Architecture and design
+
+## Built by Coco
+
+Zylos is the open-source core of [Coco](https://coco.xyz/) — the AI employee platform.
 
 ## License
 
-MIT
+[MIT](./LICENSE)
