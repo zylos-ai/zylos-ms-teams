@@ -16,6 +16,7 @@ import path from 'node:path';
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { getConfig, DATA_DIR } from '../src/lib/config.js';
+import { splitMarkdownMessage } from '../src/lib/markdown-split.js';
 
 const MAX_LENGTH = 4000;
 
@@ -245,7 +246,7 @@ async function sendMedia(mediaType, filePath) {
 }
 
 async function sendText(text) {
-  const chunks = splitMessage(text, MAX_LENGTH);
+  const chunks = splitMarkdownMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
   const triggerMsgId = parsedEndpoint.msg || null;
 

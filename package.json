@@ -1,6 +1,6 @@
 {
   "name": "zylos-teams",
-  "version": "1.2.0",
+  "version": "0.2.0",
   "description": "Microsoft Teams communication channel",
   "type": "module",
   "main": "src/index.js",

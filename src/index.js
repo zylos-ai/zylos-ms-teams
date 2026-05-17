@@ -18,7 +18,7 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { App, ExpressAdapter } from '@microsoft/teams.apps';
 
-import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig } from './lib/config.js';
+import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig, isSmartGroup } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
@@ -26,6 +26,7 @@ import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
+import { ensureReplay } from './lib/context.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -40,6 +41,20 @@ try {
 console.log('[teams] Starting...');
 console.log(`[teams] Data directory: ${DATA_DIR}`);
 
+const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
+const VOICE_ENABLED = fs.existsSync(TRANSCRIBE_SCRIPT);
+if (!VOICE_ENABLED) {
+  console.log('[teams] Voice ASR not available (~/zylos/bin/transcribe not found) — voice messages will be forwarded as attachments');
+}
+
+function transcribeAudio(audioPath) {
+  return new Promise((resolve, reject) => {
+    execFile(TRANSCRIBE_SCRIPT, [audioPath], { timeout: 90000, encoding: 'utf8' }, (err, stdout, stderr) => {
+      if (err) return reject(err);
+      resolve((stdout || '').trim());
+    });
+  });
+}
 
 // Message deduplication
 const messageDeduper = createMessageDeduper({
@@ -67,6 +82,14 @@ function recordHistoryEntry(chatId, entry) {
 
   if (entry.message_id && history.some(h => h.message_id === entry.message_id)) return;
 
+  // Content-based dedup (same user + same text within 5s window)
+  const recentDup = history.find(h =>
+    h.user_id === entry.user_id &&
+    h.text === entry.text &&
+    Math.abs(new Date(h.timestamp).getTime() - new Date(entry.timestamp).getTime()) < 5000
+  );
+  if (recentDup) return;
+
   history.push(entry);
 
   const maxEntries = (config?.message?.context_messages || 10) * 2;
@@ -88,7 +111,9 @@ function getInMemoryContext(chatId, currentMessageId, limit) {
 
 function formatContextBlock(messages) {
   if (!messages || messages.length === 0) return '';
-  const lines = messages.map(m => `[${escapeXml(m.user_name || m.user_id)}]: ${escapeXml(m.text)}`);
+  const filtered = messages.filter(m => m.text && m.text.trim());
+  if (filtered.length === 0) return '';
+  const lines = filtered.map(m => `[${escapeXml(m.user_name || m.user_id)}]: ${escapeXml(m.text)}`);
   return `<group-context>\n${lines.join('\n')}\n</group-context>\n\n`;
 }
 
@@ -229,6 +254,18 @@ function stripBotMention(activity) {
   return text;
 }
 
+function replaceBotMention(activity) {
+  let text = activity.text || '';
+  if (!activity.entities) return text;
+  for (const entity of activity.entities) {
+    if (isBotMention(entity) && entity.text) {
+      const displayName = entity.mentioned?.name || botName;
+      text = text.replace(entity.text, displayName).trim();
+    }
+  }
+  return text;
+}
+
 
 /**
  * Send message to Claude via C4 (with 1 retry on unexpected failure).
@@ -332,11 +369,6 @@ async function handleMessage(ctx) {
   // Save conversation reference for proactive messaging
   saveConvRef(activity, ctx.ref);
 
-  // Send typing indicator immediately (best-effort)
-  try {
-    await teamsApp.send(activity.conversation?.id, { type: 'typing' });
-  } catch {}
-
   const senderAadObjectId = activity.from?.aadObjectId || '';
   const senderName = activity.from?.name || 'unknown';
   const conversationId = activity.conversation?.id || '';
@@ -362,15 +394,15 @@ async function handleMessage(ctx) {
     text: historyText,
   });
 
-  // Debug: log raw attachments and full activity structure
-  // Download attachments (images, files, documents) using 3-tier strategy
-  const mediaFiles = await resolveInboundMedia({
-    attachments: activity.attachments,
-    conversationType: convType,
-    conversationId,
-    serviceUrl: activity.serviceUrl,
-    activity,
-  });
+  async function downloadMedia() {
+    return resolveInboundMedia({
+      attachments: activity.attachments,
+      conversationType: convType,
+      conversationId,
+      serviceUrl: activity.serviceUrl,
+      activity,
+    });
+  }
 
   const endpoint = buildEndpoint(conversationId, {
     type: convType,
@@ -397,6 +429,31 @@ async function handleMessage(ctx) {
       return;
     }
 
+    // Send typing indicator for DMs (after access check)
+    try {
+      await teamsApp.send(activity.conversation?.id, { type: 'typing' });
+    } catch {}
+
+    const mediaFiles = await downloadMedia();
+
+    // Voice/audio transcription
+    const audioFile = mediaFiles.find(m => {
+      const ct = (m.contentType || '').toLowerCase();
+      return ct.startsWith('audio/') || ct.startsWith('video/');
+    });
+    if (audioFile && VOICE_ENABLED) {
+      try {
+        const transcript = await transcribeAudio(audioFile.path);
+        console.log(`[teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
+        const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
+        sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+        fs.unlink(audioFile.path, () => {});
+        return;
+      } catch (err) {
+        console.error(`[teams] Voice transcription error: ${err.message}`);
+      }
+    }
+
     let msg = formatMessage('dm', senderName, text, { quotedReply });
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
@@ -409,6 +466,8 @@ async function handleMessage(ctx) {
     const groupPolicy = config.groupPolicy || 'allowlist';
     const mentioned = isBotMentioned(activity);
     const routeConfig = resolveRouteConfig(activity, config);
+    const smart = isSmartGroup(config, conversationId);
+    const smartNoMention = smart && !mentioned;
 
     if (groupPolicy === 'disabled') {
       console.log(`[teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
@@ -437,7 +496,7 @@ async function handleMessage(ctx) {
 
     const requireMention = routeConfig.requireMention;
 
-    if (requireMention && !mentioned && !senderIsOwner) {
+    if (requireMention && !mentioned && !senderIsOwner && !smart) {
       return;
     }
 
@@ -445,9 +504,16 @@ async function handleMessage(ctx) {
       // Owner in non-allowed group without mention: process as owner override
     }
 
+    // Typing indicator only when directly addressed
+    if (!smartNoMention) {
+      try {
+        await teamsApp.send(activity.conversation?.id, { type: 'typing' });
+      } catch {}
+    }
+
     const groupRaw = extractMessageContent(activity);
     const groupActivity = { ...activity, text: groupRaw };
-    let cleanText = htmlToText(stripBotMention(groupActivity));
+    let cleanText = htmlToText(replaceBotMention(groupActivity));
     // Fallback: HTML attachments use <span> for mentions instead of <at>,
     // so entity.text replacement may fail. Strip by display name after htmlToText.
     const botMentionEntity = activity.entities?.find(e => isBotMention(e));
@@ -459,6 +525,7 @@ async function handleMessage(ctx) {
     // Build group context from in-memory history + optional Graph API fetch
     const contextLimit = config.groups?.[conversationId]?.historyLimit
       || config.message?.context_messages || 10;
+    ensureReplay(conversationId, recordHistoryEntry, contextLimit);
     let contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
 
     if (contextMessages.length === 0 && isGraphEnabled()) {
@@ -484,10 +551,59 @@ async function handleMessage(ctx) {
 
     const contextBlock = formatContextBlock(contextMessages);
 
+    // Voice auto-download detection
+    const allAtts = activity.attachments || [];
+    if (smartNoMention) {
+      console.log(`[teams] Smart-no-mention debug: text=${JSON.stringify((activity.text || '').substring(0, 200))}, attachments=${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: a.contentUrl, name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 300) : JSON.stringify(a.content)?.substring(0, 300) })))}, channelData=${JSON.stringify(activity.channelData || {})}`);
+    }
+    const nonHtmlAtts = allAtts.filter(a => !(a.contentType || '').startsWith('text/html'));
+    const hasVoiceAttachment = (() => {
+      if (nonHtmlAtts.some(a => {
+        const ct = (a.contentType || '').toLowerCase();
+        return ct.startsWith('audio/') || ct.startsWith('video/');
+      })) return true;
+      const rawText = (activity.text || '').trim();
+      if (/video.?clip/i.test(rawText)) return true;
+      for (const att of allAtts) {
+        if (!(att.contentType || '').startsWith('text/html')) continue;
+        const html = typeof att.content === 'string' ? att.content : (att.content?.text || att.content?.body || '');
+        if (/<attachment[^>]+id=/i.test(html)) return true;
+        if (/schema\.skype\.com\/InputExtension/i.test(html)) return true;
+      }
+      return false;
+    })();
+    const shouldDownload = !smartNoMention || hasVoiceAttachment;
+    const mediaFiles = shouldDownload ? await downloadMedia() : [];
+    const hasAttachments = nonHtmlAtts.length > 0;
+
+    // Voice transcription in group flow
+    if (hasVoiceAttachment && VOICE_ENABLED) {
+      const audioFile = mediaFiles.find(m => {
+        const ct = (m.contentType || '').toLowerCase();
+        return ct.startsWith('audio/') || ct.startsWith('video/');
+      });
+      if (audioFile) {
+        try {
+          const transcript = await transcribeAudio(audioFile.path);
+          console.log(`[teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
+          cleanText = `[Voice] ${transcript}`;
+          fs.unlink(audioFile.path, () => {});
+        } catch (err) {
+          console.error(`[teams] Voice transcription error: ${err.message}`);
+        }
+      }
+    }
+
     let msg = formatMessage(convType, senderName, cleanText, {
-      groupName, quotedReply, contextBlock,
+      groupName, quotedReply, contextBlock, smartHint: smartNoMention && !hasVoiceAttachment,
     });
-    for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
+    if (smartNoMention && hasAttachments && !hasVoiceAttachment) {
+      msg += ' [attachments not downloaded — smart mode, no @mention]';
+    }
+    for (const media of mediaFiles) {
+      if (media.contentType?.startsWith('audio/') || media.contentType?.startsWith('video/')) continue;
+      msg += ` ---- file: ${escapeXml(media.path)}`;
+    }
     sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }

@@ -160,6 +160,29 @@ export function extractQuotedReply(activity) {
         };
       }
     }
+
+    // Skype blockquote HTML format in text/html attachments
+    if ((attachment.contentType || '').startsWith('text/html')) {
+      const html = typeof attachment.content === 'string'
+        ? attachment.content
+        : (attachment.content?.text || attachment.content?.body || '');
+      const bqMatch = html.match(/<blockquote[^>]*itemtype=["']http:\/\/schema\.skype\.com\/Reply["'][^>]*>([\s\S]*?)<\/blockquote>/i);
+      if (bqMatch) {
+        const inner = bqMatch[1];
+        const mriMatch = inner.match(/itemprop=["']mri["'][^>]*>([^<]*)</i);
+        const previewMatch = inner.match(/itemprop=["']preview["'][^>]*>([\s\S]*?)<\//i);
+        if (previewMatch) {
+          const mriValue = mriMatch ? mriMatch[1].trim() : '';
+          // Parse AAD object ID from mri format like "8:orgid:aadObjectId"
+          const aadMatch = mriValue.match(/8:orgid:(.+)/);
+          const quotedFrom = aadMatch ? aadMatch[1] : mriValue;
+          const quotedText = htmlToText(previewMatch[1].trim());
+          if (quotedText) {
+            return { quotedFrom, quotedText };
+          }
+        }
+      }
+    }
   }
 
   return null;
@@ -177,8 +200,7 @@ export function extractReplyBlockquote(html) {
   if (!html) return { html: '', quote: null };
   const match = html.match(/<blockquote[^>]*itemtype=["']http:\/\/schema\.skype\.com\/Reply["'][^>]*>[\s\S]*?<\/blockquote>/i);
   if (!match) return { html, quote: null };
-  return {
-    html: html.replace(match[0], '').trim(),
-    quote: htmlToText(match[0]),
-  };
+  const cleanHtml = html.replace(match[0], '').trim();
+  const quote = htmlToText(match[0]);
+  return { html: cleanHtml, quote };
 }

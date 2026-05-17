@@ -1,6 +1,6 @@
 ---
 name: teams
-version: 1.2.0
+version: 0.2.0
 description: >-
   Microsoft Teams communication channel.
   Use when: (1) replying to Teams messages (DM or group/channel @mentions),
@@ -20,7 +20,6 @@ lifecycle:
     entry: src/index.js
   data_dir: ~/zylos/components/teams
   hooks:
-    configure: hooks/configure.js
     post-install: hooks/post-install.js
     pre-upgrade: hooks/pre-upgrade.js
     post-upgrade: hooks/post-upgrade.js
@@ -72,6 +71,22 @@ Direct send (bypasses C4 logging, for testing only):
 node ~/zylos/.claude/skills/teams/scripts/send.js "<endpoint>" "Hello!"
 ```
 
+## Media Messages
+
+```bash
+# Send image
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
+[MEDIA:image]/path/to/photo.png
+EOF
+
+# Send file
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
+[MEDIA:file]/path/to/document.pdf
+EOF
+```
+
+Images are sent as inline base64 attachments. Other file types are sent as a text reference.
+
 ## Admin CLI
 
 Manage bot configuration via `admin.js`:
@@ -95,6 +110,18 @@ $ADM list-groups                              # List all configured groups
 $ADM add-group <conversation_id> <name>       # Add group
 $ADM remove-group <conversation_id>           # Remove a group
 $ADM set-group-policy <disabled|allowlist|open>  # Set group policy
+$ADM set-group-mode <id> <mention|smart>      # Set group mode
+
+# Team / Channel Overrides (for Teams with channels)
+$ADM list-teams                               # List configured team overrides
+$ADM add-team <teamId> <name>                 # Add team override
+$ADM remove-team <teamId>                     # Remove team override
+$ADM set-team-mention <teamId> <true|false>   # Require @mention in team
+$ADM add-channel <teamId> <channelId> <name>  # Add channel override
+$ADM remove-channel <teamId> <channelId>      # Remove channel override
+
+# Diagnostics
+$ADM graph-status                             # Show Graph API configuration state
 ```
 
 After changes, restart: `pm2 restart zylos-teams`
@@ -105,23 +132,28 @@ After changes, restart: `pm2 restart zylos-teams`
 - Logs: `~/zylos/components/teams/logs/`
 - Conversations: `~/zylos/components/teams/conversations.json`
 
-## Azure Bot Setup
+## Environment Variables
 
-### 1. Credentials
-
-Add to `~/zylos/.env`:
+Required in `~/zylos/.env`:
 
 ```bash
+# Azure Bot Registration (required)
 MSTEAMS_APP_ID=your_app_id
 MSTEAMS_APP_PASSWORD=your_app_password
+
 # Optional: for single-tenant bots
 MSTEAMS_TENANT_ID=your_tenant_id
+
+# Optional: enables Graph API for chat history fallback
+MSTEAMS_GRAPH_TOKEN=your_graph_token
 ```
 
-Get these from your Azure Bot Registration:
+Get credentials from your Azure Bot Registration:
 - Azure Portal: [portal.azure.com](https://portal.azure.com) -> Bot Services
 
-### 2. Messaging Endpoint
+## Azure Bot Setup
+
+### Messaging Endpoint
 
 In the Azure Bot Registration settings, set the messaging endpoint to:
 ```
@@ -175,6 +207,51 @@ DM and group access are controlled by **independent** top-level policies:
 **Key points:**
 - Owner always bypasses all access checks
 - `dmPolicy` and `groupPolicy` are fully independent
+
+Per-group options: `mode` (mention/smart), `allowFrom` (restrict senders), `historyLimit`.
+
+## Smart Mode
+
+Groups can operate in two modes:
+
+- **mention** (default): Bot only responds to @mentions
+- **smart**: Bot receives all messages; Claude decides whether to respond (non-mention messages include a `[smart hint: not directly addressed]` tag)
+
+Set via admin CLI: `admin.js set-group-mode <conversation_id> <mention|smart>`
+
+In smart mode without @mention:
+- Typing indicator is suppressed
+- Attachments are not downloaded (metadata-only note appended instead)
+- Claude sees the full conversation but can choose to `[SKIP]`
+
+## Group Context
+
+When responding in groups, the bot includes recent message history so Claude understands the conversation.
+
+Context is built from in-memory history (populated by incoming messages), with Graph API fallback when history is empty (requires `MSTEAMS_GRAPH_TOKEN` in `.env`).
+
+Configuration in `config.json`:
+```json
+{
+  "message": {
+    "context_messages": 10
+  }
+}
+```
+
+Per-group override via `historyLimit` in the group config.
+
+### Cold-Start Replay
+
+Chat history is persisted to JSONL files in `~/zylos/components/teams/logs/`. On restart, history is replayed from disk so group context is available immediately without relying on Graph API.
+
+Log files: `<sanitized_chat_id>.jsonl` (one JSON object per line).
+
+## Voice Messages
+
+When `~/zylos/bin/transcribe` exists (voice-asr skill installed), audio attachments are transcribed and forwarded as `[Voice] <transcription>`. The original audio file is cleaned up after transcription.
+
+If the transcribe script is not installed, voice messages are forwarded as regular file attachments.
 
 ## Service Management
 

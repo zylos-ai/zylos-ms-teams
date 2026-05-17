@@ -33,7 +33,7 @@ export function getConversationType(activity) {
   return 'dm';
 }
 
-export function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock } = {}) {
+export function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock, smartHint } = {}) {
   const prefix = type === 'dm'
     ? '[Teams DM]'
     : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
@@ -48,6 +48,10 @@ export function formatMessage(type, userName, text, { groupName, quotedReply, co
     const safeQuotedFrom = escapeXml(quotedReply.quotedFrom);
     const safeQuotedText = escapeXml(quotedReply.quotedText);
     content += `\n<quoted-reply from="${safeQuotedFrom}">${safeQuotedText}</quoted-reply>`;
+  }
+
+  if (smartHint) {
+    content += '\n<smart-mode>\nDecide whether to respond. Do NOT reply if: the message is unrelated to you, just casual chat, or doesn\'t need your input. Only reply when: 1) someone asks a question you can help with, 2) discussing technical topics you know well, 3) someone clearly needs assistance. When uncertain, prefer NOT to reply. Reply with exactly [SKIP] to stay silent.\n</smart-mode>';
   }
 
   return content;

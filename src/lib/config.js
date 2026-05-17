@@ -67,6 +67,12 @@ export function resolveRouteConfig(activity, config) {
     || '';
   const conversationId = activity.conversation?.id || '';
 
+  // Apply group-level allowFrom from config.groups
+  const groupConfig = (config.groups || {})[conversationId];
+  if (groupConfig && Array.isArray(groupConfig.allowFrom) && groupConfig.allowFrom.length > 0) {
+    result.allowFrom = groupConfig.allowFrom;
+  }
+
   const teamOverrides = config.teamOverrides || {};
   const teamConfig = teamOverrides[teamId];
 
@@ -88,6 +94,12 @@ export function resolveRouteConfig(activity, config) {
   if (Array.isArray(channelConfig.allowFrom)) result.allowFrom = channelConfig.allowFrom;
 
   return result;
+}
+
+export function isSmartGroup(config, conversationId) {
+  const groups = config.groups || {};
+  const group = groups[conversationId];
+  return group?.mode === 'smart';
 }
 
 export function loadConfig() {

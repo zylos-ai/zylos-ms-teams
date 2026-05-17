@@ -27,11 +27,18 @@ After merge, create a GitHub Release with tag `vX.Y.Z` from the merge commit.
 
 This is a **communication component** for the Zylos agent ecosystem.
 
-- `src/index.js` — Main entry point (Express server with Bot Framework adapter)
-- `src/admin.js` — Admin CLI (config, groups, DM policy management)
-- `src/lib/config.js` — Config loader with hot-reload
+- `src/index.js` — Main entry point (Express server with Teams SDK adapter)
+- `src/admin.js` — Admin CLI (config, groups, DM policy, group mode management)
+- `src/lib/config.js` — Config loader with hot-reload, smart mode helpers
+- `src/lib/context.js` — JSONL persistence and cold-start replay for group context
 - `src/lib/conversation-store.js` — File-based conversation reference store
 - `src/lib/message-dedup.js` — Message deduplication with TTL
-- `scripts/send.js` — C4 outbound message interface
+- `src/lib/format.js` — Message formatting, endpoint building, XML escaping
+- `src/lib/html.js` — HTML-to-text conversion, reply blockquote extraction
+- `src/lib/graph.js` — Microsoft Graph API integration (chat/channel history)
+- `src/lib/auth.js` — JWT validation middleware for Bot Framework
+- `src/lib/attachments.js` — Inbound media download and resolution
+- `src/lib/markdown-split.js` — Markdown-aware message splitting
+- `scripts/send.js` — C4 outbound message interface (splitting, reply-to, rate limit retry)
 - `hooks/` — Lifecycle hooks (post-install, pre-upgrade, post-upgrade)
 - `ecosystem.config.cjs` — PM2 service config (CommonJS required by PM2)
