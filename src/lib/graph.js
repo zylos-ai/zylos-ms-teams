@@ -127,7 +127,7 @@ export async function fetchChannelHistory(teamId, channelId, count = 10) {
     `/teams/${encodedTeam}/channels/${encodedChannel}/messages?$top=${count}`
   );
 
-  const messages = data.value || [];
+  const messages = (data.value || []).reverse();
   return messages.map(formatGraphMessage);
 }
 

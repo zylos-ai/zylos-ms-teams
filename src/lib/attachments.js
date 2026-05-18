@@ -487,19 +487,28 @@ export {
   resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
 };
 
-async function downloadGraphNearbyFiles({ conversationId, activity, tokenProvider }) {
+async function downloadGraphNearbyFiles({ conversationType, conversationId, activity, tokenProvider }) {
   let accessToken;
   try {
     accessToken = await tokenProvider(GRAPH_SCOPE);
   } catch { return []; }
   if (!accessToken) return [];
 
-  const chatId = (conversationId || '').trim();
-  if (!chatId) return [];
+  let url;
+  if (conversationType === 'channel') {
+    const channelData = activity.channelData || {};
+    const teamId = channelData.team?.id || channelData.teamId;
+    const channelId = channelData.channel?.id || channelData.channelId || channelData.teamsChannelId;
+    if (!teamId || !channelId) return [];
+    url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=5&$orderby=createdDateTime desc`;
+  } else {
+    const chatId = (conversationId || '').trim();
+    if (!chatId) return [];
+    url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=5&$orderby=createdDateTime desc`;
+  }
 
   let messages;
   try {
-    const url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=5&$orderby=createdDateTime desc`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!res.ok) return [];
     const data = await res.json();
@@ -593,7 +602,7 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
     }
 
     // Tier 3b: check nearby messages for file uploads sent separately from @mention
-    media = await downloadGraphNearbyFiles({ conversationId, activity, tokenProvider });
+    media = await downloadGraphNearbyFiles({ conversationType, conversationId, activity, tokenProvider });
     if (media.length > 0) {
       console.log(`[teams/attachments] Tier 3b (Graph nearby): downloaded ${media.length} file(s)`);
       return media;

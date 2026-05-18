@@ -27,6 +27,7 @@ import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupConte
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 import { ensureReplay } from './lib/context.js';
+import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -42,9 +43,22 @@ console.log('[teams] Starting...');
 console.log(`[teams] Data directory: ${DATA_DIR}`);
 
 const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
-const VOICE_ENABLED = fs.existsSync(TRANSCRIBE_SCRIPT);
-if (!VOICE_ENABLED) {
-  console.log('[teams] Voice ASR not available (~/zylos/bin/transcribe not found) — voice messages will be forwarded as attachments');
+let VOICE_ENABLED = false;
+if (!fs.existsSync(TRANSCRIBE_SCRIPT)) {
+  console.log('[teams] Voice ASR not available (~/zylos/bin/transcribe not found)');
+} else {
+  try {
+    const featuresFile = path.join(process.env.HOME, 'zylos/.features.json');
+    if (fs.existsSync(featuresFile)) {
+      const features = JSON.parse(fs.readFileSync(featuresFile, 'utf8'));
+      VOICE_ENABLED = !!features?.features?.voiceAsr;
+    } else {
+      VOICE_ENABLED = true;
+    }
+  } catch {
+    VOICE_ENABLED = true;
+  }
+  console.log(`[teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (not included in current plan)'}`);
 }
 
 function transcribeAudio(audioPath) {
@@ -434,6 +448,18 @@ async function handleMessage(ctx) {
       await teamsApp.send(activity.conversation?.id, { type: 'typing' });
     } catch {}
 
+    // Auto-react on receipt (delegated auth, fire-and-forget)
+    if (hasAuth(senderAadObjectId)) {
+      sendReaction({
+        aadObjectId: senderAadObjectId,
+        conversationType: convType,
+        conversationId,
+        messageId: activityId,
+        reactionType: 'like',
+        activity,
+      }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+    }
+
     const mediaFiles = await downloadMedia();
 
     // Voice/audio transcription
@@ -509,6 +535,18 @@ async function handleMessage(ctx) {
       try {
         await teamsApp.send(activity.conversation?.id, { type: 'typing' });
       } catch {}
+    }
+
+    // Auto-react on receipt (delegated auth, fire-and-forget)
+    if (!smartNoMention && hasAuth(senderAadObjectId)) {
+      sendReaction({
+        aadObjectId: senderAadObjectId,
+        conversationType: convType,
+        conversationId,
+        messageId: activityId,
+        reactionType: 'like',
+        activity,
+      }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
     }
 
     const groupRaw = extractMessageContent(activity);
@@ -804,6 +842,86 @@ expressApp.get('/health', (req, res) => {
     groupPolicy: healthConfig.groupPolicy || 'allowlist',
     dmPolicy: healthConfig.dmPolicy || 'owner'
   });
+});
+
+// ── Delegated Auth: OAuth callback ──
+
+expressApp.get('/auth/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+
+  if (error) {
+    console.error(`[teams/auth] OAuth error: ${error} — ${error_description}`);
+    return res.status(400).send(`Authentication failed: ${error_description || error}`);
+  }
+
+  if (!code || !state) {
+    return res.status(400).send('Missing code or state parameter.');
+  }
+
+  if (!validateState(state)) {
+    return res.status(400).send('Invalid or expired state. Please try signing in again.');
+  }
+
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers['host'];
+  const redirectUri = `${protocol}://${host}/auth/callback`;
+
+  try {
+    const { aadObjectId, displayName } = await exchangeCode(code, state, redirectUri);
+    res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Signed in successfully</h2><p>${displayName}, your delegated auth is now active.</p><p>You can close this tab and return to Teams.</p></body></html>`);
+  } catch (err) {
+    console.error(`[teams/auth] Token exchange failed: ${err.message}`);
+    res.status(500).send('Authentication failed. Please try again.');
+  }
+});
+
+expressApp.get('/auth/sign-in', (req, res) => {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers['host'];
+  const redirectUri = `${protocol}://${host}/auth/callback`;
+
+  try {
+    const { url } = buildAuthUrl(redirectUri);
+    res.redirect(url);
+  } catch (err) {
+    res.status(500).send(`Failed to build auth URL: ${err.message}`);
+  }
+});
+
+// ── Internal reaction endpoint ──
+
+expressApp.use('/internal/react', express.json());
+expressApp.post('/internal/react', async (req, res) => {
+  const token = req.headers['x-internal-token'];
+  if (!token || token !== INTERNAL_TOKEN) {
+    return res.status(403).json({ error: 'unauthorized' });
+  }
+
+  const { conversationId, messageId, reactionType, aadObjectId, conversationType, teamId, channelId } = req.body || {};
+  if (!conversationId || !messageId || !reactionType) {
+    return res.status(400).json({ error: 'missing conversationId, messageId, or reactionType' });
+  }
+
+  const authUser = aadObjectId || config.owner?.aadObjectId;
+  if (!authUser || !hasAuth(authUser)) {
+    return res.status(400).json({ error: 'no delegated auth available — user must sign in first' });
+  }
+
+  try {
+    const activity = teamId ? { channelData: { team: { id: teamId }, channel: { id: channelId } } } : {};
+    await sendReaction({
+      aadObjectId: authUser,
+      conversationType: conversationType || 'group',
+      conversationId,
+      messageId,
+      reactionType,
+      activity,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`[teams] Internal react error: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Lifecycle ──

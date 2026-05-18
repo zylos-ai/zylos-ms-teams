@@ -36,7 +36,9 @@ export function getConversationType(activity) {
 export function formatMessage(type, userName, text, { groupName, quotedReply, contextBlock, smartHint } = {}) {
   const prefix = type === 'dm'
     ? '[Teams DM]'
-    : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
+    : type === 'channel'
+      ? `[Teams CHANNEL:${escapeXml(groupName || 'unknown')}]`
+      : `[Teams GROUP:${escapeXml(groupName || 'unknown')}]`;
   const safeUserName = escapeXml(userName);
   const safeText = escapeXml(text);
 

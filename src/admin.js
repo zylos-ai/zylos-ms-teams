@@ -6,7 +6,12 @@
  * Usage: node admin.js <command> [args]
  */
 
+import dotenv from 'dotenv';
+import path from 'node:path';
+dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
+
 import { loadConfig, saveConfig, getCredentials } from './lib/config.js';
+import { getAuthenticatedUsers, revokeAuth, buildAuthUrl } from './lib/delegated-auth.js';
 
 const VALID_GROUP_POLICIES = new Set(['disabled', 'allowlist', 'open']);
 
@@ -321,6 +326,51 @@ const commands = {
     }
   },
 
+  'auth-status': () => {
+    const users = getAuthenticatedUsers();
+    if (users.length === 0) {
+      console.log('No delegated auth tokens stored.');
+      console.log('Use auth-url to generate a sign-in link.');
+      return;
+    }
+    console.log(`Delegated Auth Users (${users.length}):`);
+    for (const u of users) {
+      const expires = new Date(u.expiresAt).toISOString();
+      const status = Date.now() < u.expiresAt ? 'active' : 'needs refresh';
+      console.log(`  ${u.displayName} (${u.aadObjectId}) — ${status}, expires ${expires}`);
+    }
+  },
+
+  'auth-url': (baseUrl) => {
+    if (!baseUrl) {
+      console.error('Usage: admin.js auth-url <base-url>');
+      console.error('Example: admin.js auth-url https://your-domain.ngrok-free.dev');
+      process.exit(1);
+    }
+    const redirectUri = `${baseUrl.replace(/\/$/, '')}/auth/callback`;
+    try {
+      const { url } = buildAuthUrl(redirectUri);
+      console.log('Sign-in URL (send to user):');
+      console.log(url);
+      console.log(`\nRedirect URI (must be registered in Azure AD): ${redirectUri}`);
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+  },
+
+  'auth-revoke': (aadObjectId) => {
+    if (!aadObjectId) {
+      console.error('Usage: admin.js auth-revoke <aad_object_id>');
+      process.exit(1);
+    }
+    if (revokeAuth(aadObjectId)) {
+      console.log(`Revoked delegated auth for ${aadObjectId}`);
+    } else {
+      console.log(`No auth found for ${aadObjectId}`);
+    }
+  },
+
   'help': () => {
     console.log(`
 zylos-teams admin CLI
@@ -352,6 +402,11 @@ Commands:
 
   Graph API:
   graph-status                        Show Graph API configuration status
+
+  Delegated Auth (reactions):
+  auth-status                         Show delegated auth users
+  auth-url <base-url>                 Generate sign-in URL
+  auth-revoke <aad_object_id>         Revoke delegated auth for a user
 
 Permission flow:
   Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom
