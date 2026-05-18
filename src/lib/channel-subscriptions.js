@@ -62,7 +62,7 @@ export async function createSubscription(teamId, channelId, notificationUrl) {
     clientState: getCredentials().tenantId,
   };
 
-  console.log(`[teams/subs] Creating subscription for ${resource}`);
+  console.log(`[ms-teams/subs] Creating subscription for ${resource}`);
   const sub = await graphRequest('/subscriptions', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -77,13 +77,13 @@ export async function createSubscription(teamId, channelId, notificationUrl) {
     expirationDateTime: sub.expirationDateTime,
   };
   saveSubscriptions(subs);
-  console.log(`[teams/subs] Subscription created: ${sub.id}, expires ${sub.expirationDateTime}`);
+  console.log(`[ms-teams/subs] Subscription created: ${sub.id}, expires ${sub.expirationDateTime}`);
   return sub;
 }
 
 export async function renewSubscription(subId) {
   const body = { expirationDateTime: expirationDateTime() };
-  console.log(`[teams/subs] Renewing subscription ${subId}`);
+  console.log(`[ms-teams/subs] Renewing subscription ${subId}`);
   const sub = await graphRequest(`/subscriptions/${subId}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
@@ -96,7 +96,7 @@ export async function renewSubscription(subId) {
     }
   }
   saveSubscriptions(subs);
-  console.log(`[teams/subs] Subscription renewed, expires ${sub.expirationDateTime}`);
+  console.log(`[ms-teams/subs] Subscription renewed, expires ${sub.expirationDateTime}`);
   return sub;
 }
 
@@ -107,9 +107,9 @@ export async function deleteSubscription(subId) {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
-    console.log(`[teams/subs] Subscription deleted: ${subId}`);
+    console.log(`[ms-teams/subs] Subscription deleted: ${subId}`);
   } catch (err) {
-    console.warn(`[teams/subs] Failed to delete subscription ${subId}: ${err.message}`);
+    console.warn(`[ms-teams/subs] Failed to delete subscription ${subId}: ${err.message}`);
   }
   const subs = loadSubscriptions();
   for (const [key, entry] of Object.entries(subs)) {
@@ -150,7 +150,7 @@ export async function syncSubscriptions(channels, notificationUrl) {
       try {
         await createSubscription(cfg.teamId, chId, notificationUrl);
       } catch (err) {
-        console.error(`[teams/subs] Failed to create subscription for ${chId}: ${err.message}`);
+        console.error(`[ms-teams/subs] Failed to create subscription for ${chId}: ${err.message}`);
       }
     }
   }
@@ -166,7 +166,7 @@ export async function renewAllSubscriptions() {
       try {
         await renewSubscription(entry.id);
       } catch (err) {
-        console.warn(`[teams/subs] Renewal failed for ${chId}, recreating: ${err.message}`);
+        console.warn(`[ms-teams/subs] Renewal failed for ${chId}, recreating: ${err.message}`);
         try {
           await deleteSubscription(entry.id);
         } catch {}
@@ -181,7 +181,7 @@ export function startRenewalLoop() {
     try {
       await renewAllSubscriptions();
     } catch (err) {
-      console.error(`[teams/subs] Renewal loop error: ${err.message}`);
+      console.error(`[ms-teams/subs] Renewal loop error: ${err.message}`);
     }
   }, 10 * 60_000);
   renewalTimer.unref();

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Configure hook for zylos-teams
+ * Configure hook for zylos-ms-teams
  *
  * Called by zylos after collecting SKILL.md config.required values.
  * Receives a JSON object on stdin and writes component-owned config.json.
@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/teams');
+const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const ENV_PATH = path.join(HOME, 'zylos/.env');
 const COMPONENT_PREFIX = 'MSTEAMS_';

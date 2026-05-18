@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Post-install hook for zylos-teams
+ * Post-install hook for zylos-ms-teams
  *
  * This hook handles teams-specific setup:
  * - Create subdirectories (logs, media, data)
@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/teams');
+const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const ENV_FILE = path.join(HOME, 'zylos/.env');
 
 const INITIAL_CONFIG = {

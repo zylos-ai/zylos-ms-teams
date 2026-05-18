@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * C4 Communication Bridge Interface for zylos-teams
+ * C4 Communication Bridge Interface for zylos-ms-teams
  *
  * Usage:
  *   ./send.js <endpoint> "message text"
@@ -54,7 +54,7 @@ if (message.trim() === '[SKIP]') {
 
 const config = getConfig();
 if (!config.enabled) {
-  console.error('Error: teams is disabled in config');
+  console.error('Error: ms-teams is disabled in config');
   process.exit(1);
 }
 
@@ -136,7 +136,7 @@ function sleep(ms) {
 async function sendViaInternal(conversationId, text, { replyToId } = {}) {
   const internalToken = readInternalToken();
   if (!internalToken) {
-    throw new Error('Internal token not found. Is the teams service running?');
+    throw new Error('Internal token not found. Is the ms-teams service running?');
   }
 
   const port = config.port || 3978;
@@ -165,7 +165,7 @@ async function sendViaInternal(conversationId, text, { replyToId } = {}) {
 
       if (response.status === 429 && attempt < maxRetries) {
         const retryAfter = parseInt(response.headers.get('retry-after') || '5', 10);
-        console.warn(`[teams] Rate limited, retrying in ${retryAfter}s`);
+        console.warn(`[ms-teams] Rate limited, retrying in ${retryAfter}s`);
         clearTimeout(timeout);
         await sleep(retryAfter * 1000);
         continue;
@@ -199,7 +199,7 @@ async function sendMedia(mediaType, filePath) {
   const { conversationId } = parsedEndpoint;
   const internalToken = readInternalToken();
   if (!internalToken) {
-    throw new Error('Internal token not found. Is the teams service running?');
+    throw new Error('Internal token not found. Is the ms-teams service running?');
   }
 
   const port = config.port || 3978;
@@ -228,7 +228,7 @@ async function sendMedia(mediaType, filePath) {
 
       if (response.status === 429 && attempt < maxRetries) {
         const retryAfter = parseInt(response.headers.get('retry-after') || '5', 10);
-        console.warn(`[teams] Rate limited on media send, retrying in ${retryAfter}s`);
+        console.warn(`[ms-teams] Rate limited on media send, retrying in ${retryAfter}s`);
         clearTimeout(timeout);
         await sleep(retryAfter * 1000);
         continue;

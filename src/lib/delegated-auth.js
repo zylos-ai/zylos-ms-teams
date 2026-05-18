@@ -24,7 +24,7 @@ function saveTokens() {
     fs.mkdirSync(path.dirname(TOKENS_FILE), { recursive: true });
     fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2), { mode: 0o600 });
   } catch (err) {
-    console.error(`[teams/delegated-auth] Failed to save tokens: ${err.message}`);
+    console.error(`[ms-teams/delegated-auth] Failed to save tokens: ${err.message}`);
   }
 }
 
@@ -103,7 +103,7 @@ export async function exchangeCode(code, state, redirectUri) {
   saveTokens();
   pendingStates.delete(state);
 
-  console.log(`[teams/delegated-auth] Authorized: ${displayName} (${aadObjectId})`);
+  console.log(`[ms-teams/delegated-auth] Authorized: ${displayName} (${aadObjectId})`);
   return { aadObjectId, displayName };
 }
 
@@ -128,7 +128,7 @@ async function refreshToken(aadObjectId) {
   });
 
   if (!res.ok) {
-    console.warn(`[teams/delegated-auth] Refresh failed for ${aadObjectId}, revoking`);
+    console.warn(`[ms-teams/delegated-auth] Refresh failed for ${aadObjectId}, revoking`);
     delete tokens[aadObjectId];
     saveTokens();
     return null;
@@ -194,14 +194,14 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
   });
   if (!res.ok) {
     const errText = await res.text();
-    console.warn(`[teams/delegated-auth] Failed to list chats (${res.status}): ${errText}`);
+    console.warn(`[ms-teams/delegated-auth] Failed to list chats (${res.status}): ${errText}`);
     return null;
   }
 
   const data = await res.json();
-  console.debug(`[teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats`);
+  console.debug(`[ms-teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats`);
   if (data.value?.length) {
-    console.debug(`[teams/delegated-auth] First chat ID: ${data.value[0].id}`);
+    console.debug(`[ms-teams/delegated-auth] First chat ID: ${data.value[0].id}`);
   }
 
   // Use the most recently active oneOnOne chat (caller invokes this right after receiving a message)
@@ -224,7 +224,7 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
     const channelData = activity?.channelData || {};
     const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
     const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
-    console.debug(`[teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
+    console.debug(`[ms-teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   } else {
@@ -251,7 +251,7 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
     const text = await res.text();
     throw new Error(`setReaction failed (${res.status}): ${text}`);
   }
-  console.log(`[teams/delegated-auth] Reaction '${reactionType}' set on ${messageId}`);
+  console.log(`[ms-teams/delegated-auth] Reaction '${reactionType}' set on ${messageId}`);
 }
 
 export async function removeReaction({ aadObjectId, conversationType, conversationId, messageId, reactionType, activity }) {
@@ -289,5 +289,5 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
     const text = await res.text();
     throw new Error(`unsetReaction failed (${res.status}): ${text}`);
   }
-  console.log(`[teams/delegated-auth] Reaction '${reactionType}' removed from ${messageId}`);
+  console.log(`[ms-teams/delegated-auth] Reaction '${reactionType}' removed from ${messageId}`);
 }

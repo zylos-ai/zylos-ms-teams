@@ -27,7 +27,7 @@ You do **not** need:
 
 1. Go to [Azure Portal](https://portal.azure.com) → **Microsoft Entra ID** → **App registrations**
 2. Click **New registration**
-3. Enter a name (e.g., `zylos-teams`)
+3. Enter a name (e.g., `zylos-ms-teams`)
 4. Under **Supported account types**, select **Single tenant** (recommended) or **Multitenant** depending on your needs
 5. Leave **Redirect URI** blank — not needed for bot-only apps
 6. Click **Register**
@@ -40,7 +40,7 @@ After registration, note down:
 
 1. In your App Registration, go to **Certificates & secrets**
 2. Click **New client secret**
-3. Enter a description (e.g., `zylos-teams-secret`) and select an expiry period
+3. Enter a description (e.g., `zylos-ms-teams-secret`) and select an expiry period
 4. Click **Add**
 5. **Copy the secret value immediately** — it is only shown once. This is your `MSTEAMS_APP_PASSWORD`
 
@@ -65,16 +65,16 @@ These permissions enable file attachments, chat history, and user resolution. Th
 
 > **Note:** Admin consent requires tenant admin privileges. If you are not an admin, ask your IT department to grant consent.
 
-## Step 4: Install zylos-teams
+## Step 4: Install zylos-ms-teams
 
 ```bash
-zylos add teams
+zylos add ms-teams
 ```
 
 Or install manually:
 
 ```bash
-cd ~/zylos/.claude/skills/teams
+cd ~/zylos/.claude/skills/ms-teams
 npm install
 ```
 
@@ -105,7 +105,7 @@ https://xxxx.ngrok-free.dev/api/messages
 
 ### Option B: Production domain
 
-Point your domain to the server running zylos-teams and configure SSL (e.g., via Caddy or Cloudflare). Your messaging endpoint will be:
+Point your domain to the server running zylos-ms-teams and configure SSL (e.g., via Caddy or Cloudflare). Your messaging endpoint will be:
 ```
 https://your-domain.com/api/messages
 ```
@@ -179,7 +179,7 @@ Replace `<your MSTEAMS_APP_ID>` with your actual Application (client) ID.
 ## Step 9: Start the Service
 
 ```bash
-pm2 start zylos-teams
+pm2 start zylos-ms-teams
 ```
 
 Or if using the zylos CLI:
@@ -189,14 +189,14 @@ zylos start teams
 
 Verify the service is running:
 ```bash
-pm2 logs zylos-teams --lines 10
+pm2 logs zylos-ms-teams --lines 10
 ```
 
 You should see:
 ```
-[teams] HTTP server running on 127.0.0.1:3978
-[teams] Bot identity: bot (<your app id>)
-[teams] Credentials: configured
+[ms-teams] HTTP server running on 127.0.0.1:3978
+[ms-teams] Bot identity: bot (<your app id>)
+[ms-teams] Credentials: configured
 ```
 
 ## Step 10: Start Using
@@ -216,7 +216,7 @@ You should see:
 
 ### Runtime Config
 
-Config file: `~/zylos/components/teams/config.json`
+Config file: `~/zylos/components/ms-teams/config.json`
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -263,7 +263,7 @@ node src/admin.js graph-status
 
 ## Attachment Download
 
-zylos-teams uses a 3-tier download strategy for inbound file attachments:
+zylos-ms-teams uses a 3-tier download strategy for inbound file attachments:
 
 | Tier | Method | Used For |
 |------|--------|----------|
@@ -278,7 +278,7 @@ Each tier includes auth fallback: unauthenticated → Bot Framework token → Gr
 | Limitation | Details |
 |------------|---------|
 | No direct file upload in bot DMs | Teams does not allow drag-and-drop file upload in bot DMs. Files arrive via OneDrive sharing or file cards. |
-| Webhook timeouts | Teams expects a quick HTTP response. Slow processing may cause retries or dropped replies. zylos-teams handles this by responding immediately and sending replies proactively. |
+| Webhook timeouts | Teams expects a quick HTTP response. Slow processing may cause retries or dropped replies. zylos-ms-teams handles this by responding immediately and sending replies proactively. |
 | No reaction support | The `@microsoft/teams.apps` v2 SDK does not expose reaction events. |
 | Formatting limits | Teams markdown is more limited than Slack or Discord. Tables and nested lists may not render correctly. |
 
@@ -286,9 +286,9 @@ Each tier includes auth fallback: unauthenticated → Bot Framework token → Gr
 
 | Issue | Solution |
 |-------|----------|
-| Bot not responding | Check credentials in `~/zylos/.env`, verify HTTPS endpoint is reachable, check `pm2 logs zylos-teams` |
+| Bot not responding | Check credentials in `~/zylos/.env`, verify HTTPS endpoint is reachable, check `pm2 logs zylos-ms-teams` |
 | 401 on attachments | Ensure Graph API permissions are granted with admin consent |
-| Duplicate messages | Normal — Teams may retry webhooks. zylos-teams deduplicates automatically (5-minute window) |
+| Duplicate messages | Normal — Teams may retry webhooks. zylos-ms-teams deduplicates automatically (5-minute window) |
 | Bot not visible in Teams | Ensure the app manifest is correctly packaged and sideloaded/deployed |
 | Graph features not working | Check `node src/admin.js graph-status` — all three credentials must be set and admin consent granted |
 

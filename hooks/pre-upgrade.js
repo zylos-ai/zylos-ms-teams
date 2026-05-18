@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pre-upgrade hook for zylos-teams
+ * Pre-upgrade hook for zylos-ms-teams
  *
  * Called by Claude BEFORE CLI upgrade steps.
  * If this hook fails (exit code 1), the upgrade is aborted.
@@ -17,10 +17,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/teams');
+const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const configPath = path.join(DATA_DIR, 'config.json');
 
-console.log('[pre-upgrade] Running teams pre-upgrade checks...\n');
+console.log('[pre-upgrade] Running ms-teams pre-upgrade checks...\n');
 
 // 1. Backup config before upgrade
 if (fs.existsSync(configPath)) {

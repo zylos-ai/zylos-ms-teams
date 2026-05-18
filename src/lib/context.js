@@ -17,7 +17,7 @@ export function logEntry(chatId, entry) {
   try {
     fs.appendFileSync(logFile, JSON.stringify(entry) + '\n');
   } catch (err) {
-    console.error(`[teams] Log write failed for ${chatId}: ${err.message}`);
+    console.error(`[ms-teams] Log write failed for ${chatId}: ${err.message}`);
   }
 }
 
@@ -60,9 +60,9 @@ export function ensureReplay(chatId, recordFn, limit = 10) {
 
     _replayedKeys.add(key);
     if (tail.length > 0) {
-      console.log(`[teams] Replayed ${tail.length} log entries for ${key}`);
+      console.log(`[ms-teams] Replayed ${tail.length} log entries for ${key}`);
     }
   } catch (err) {
-    console.error(`[teams] Log replay failed for ${key}: ${err.message}`);
+    console.error(`[ms-teams] Log replay failed for ${key}: ${err.message}`);
   }
 }

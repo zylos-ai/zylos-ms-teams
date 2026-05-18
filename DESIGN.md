@@ -1,9 +1,9 @@
-# zylos-teams Design Document
+# zylos-ms-teams Design Document
 
 **Version**: v1.2.0
 **Date**: 2026-05-18
 **Author**: Zylos Team
-**Repository**: https://github.com/zylos-ai/zylos-teams
+**Repository**: https://github.com/zylos-ai/zylos-ms-teams
 **Status**: Released
 
 ---
@@ -17,7 +17,7 @@ Microsoft Teams communication component for Zylos. Enables bidirectional messagi
 ### 2.1 Component Structure
 
 ```
-zylos-teams/
+zylos-ms-teams/
   src/
     index.js              — Express server, Bot Framework adapter, message routing
     admin.js              — CLI for config/ACL management
@@ -78,7 +78,7 @@ zylos-teams/
 
 ### 3.2 Config File
 
-Located at `~/zylos/components/teams/config.json`:
+Located at `~/zylos/components/ms-teams/config.json`:
 
 ```json
 {

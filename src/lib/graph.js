@@ -146,7 +146,7 @@ export async function fetchChannelHistory(teamId, channelId, count = 10, threadM
   }
 
   const messages = (data.value || []).reverse();
-  console.debug(`[teams/graph] fetchChannelHistory: path=${urlPath}, token=${delegatedToken ? 'delegated' : 'app'}, returned ${messages.length} messages`);
+  console.debug(`[ms-teams/graph] fetchChannelHistory: path=${urlPath}, token=${delegatedToken ? 'delegated' : 'app'}, returned ${messages.length} messages`);
   return messages.map(formatGraphMessage);
 }
 
@@ -226,7 +226,7 @@ export async function downloadHostedContent(contentUrl, filename) {
     fs.writeFileSync(filePath, buffer);
     return filePath;
   } catch (err) {
-    console.error(`[teams/graph] Failed to download hosted content: ${err.message}`);
+    console.error(`[ms-teams/graph] Failed to download hosted content: ${err.message}`);
     return null;
   }
 }
@@ -266,7 +266,7 @@ export async function uploadFileToDrive(filePath, chatId) {
 
     return data.webUrl || null;
   } catch (err) {
-    console.error(`[teams/graph] Failed to upload file: ${err.message}`);
+    console.error(`[ms-teams/graph] Failed to upload file: ${err.message}`);
     return null;
   }
 }

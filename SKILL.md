@@ -1,5 +1,5 @@
 ---
-name: teams
+name: ms-teams
 version: 1.2.0
 description: >-
   Microsoft Teams communication channel.
@@ -9,16 +9,16 @@ description: >-
   (4) managing group access control (groupPolicy, per-group allowFrom),
   (5) configuring the bot (admin CLI, credentials),
   (6) troubleshooting Teams bot or service issues.
-  Config at ~/zylos/components/teams/config.json. Service: pm2 zylos-teams.
+  Config at ~/zylos/components/ms-teams/config.json. Service: pm2 zylos-ms-teams.
 type: communication
 
 lifecycle:
   npm: true
   service:
     type: pm2
-    name: zylos-teams
+    name: zylos-ms-teams
     entry: src/index.js
-  data_dir: ~/zylos/components/teams
+  data_dir: ~/zylos/components/ms-teams
   hooks:
     configure: hooks/configure.js
     post-install: hooks/post-install.js
@@ -34,7 +34,7 @@ lifecycle:
     - logs/
 
 upgrade:
-  repo: zylos-ai/zylos-teams
+  repo: zylos-ai/zylos-ms-teams
   branch: main
 
 config:
@@ -51,7 +51,7 @@ config:
       description: "Graph API token (enables chat history fallback)"
       sensitive: true
 
-next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/teams/api/messages. 4) Start the service (pm2 restart zylos-teams)."
+next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
 
 http_routes:
   - path: /teams/api/messages
@@ -77,26 +77,26 @@ Depends on: comm-bridge (C4 message routing).
 
 ```bash
 # Via C4 bridge (standard path — always use stdin form)
-cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "ms-teams" "<conversationId>|type:dm|user:<aadObjectId>"
 Hello!
 EOF
 ```
 
 Direct send (bypasses C4 logging, for testing only):
 ```bash
-node ~/zylos/.claude/skills/teams/scripts/send.js "<endpoint>" "Hello!"
+node ~/zylos/.claude/skills/ms-teams/scripts/send.js "<endpoint>" "Hello!"
 ```
 
 ## Media Messages
 
 ```bash
 # Send image
-cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "ms-teams" "<conversationId>|type:dm|user:<aadObjectId>"
 [MEDIA:image]/path/to/photo.png
 EOF
 
 # Send file
-cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "teams" "<conversationId>|type:dm|user:<aadObjectId>"
+cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js "ms-teams" "<conversationId>|type:dm|user:<aadObjectId>"
 [MEDIA:file]/path/to/document.pdf
 EOF
 ```
@@ -108,7 +108,7 @@ Images are sent as inline base64 attachments. Other file types are sent as a tex
 For smart-mode conversations, attachments may not be included in the webhook payload. Use the on-demand download script:
 
 ```bash
-node ~/zylos/.claude/skills/teams/scripts/download-attachments.js <conversationId> <messageId>
+node ~/zylos/.claude/skills/ms-teams/scripts/download-attachments.js <conversationId> <messageId>
 ```
 
 ## Admin CLI
@@ -116,7 +116,7 @@ node ~/zylos/.claude/skills/teams/scripts/download-attachments.js <conversationI
 Manage bot configuration via `admin.js`:
 
 ```bash
-ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
+ADM="node ~/zylos/.claude/skills/ms-teams/src/admin.js"
 
 # General
 $ADM show                                       # Show full config
@@ -151,16 +151,16 @@ $ADM auth-url <base-url>                          # Generate sign-in URL
 $ADM auth-revoke <aad_object_id>                  # Revoke delegated auth for a user
 ```
 
-After changes, restart: `pm2 restart zylos-teams`
+After changes, restart: `pm2 restart zylos-ms-teams`
 
 ## Config Location
 
-- Config: `~/zylos/components/teams/config.json`
-- Logs: `~/zylos/components/teams/logs/`
-- Conversations: `~/zylos/components/teams/conversations.json`
-- Delegated tokens: `~/zylos/components/teams/delegated-tokens.json`
-- Reaction cache: `~/zylos/components/teams/reaction-cache.json`
-- Channel subscriptions: `~/zylos/components/teams/channel-subscriptions.json`
+- Config: `~/zylos/components/ms-teams/config.json`
+- Logs: `~/zylos/components/ms-teams/logs/`
+- Conversations: `~/zylos/components/ms-teams/conversations.json`
+- Delegated tokens: `~/zylos/components/ms-teams/delegated-tokens.json`
+- Reaction cache: `~/zylos/components/ms-teams/reaction-cache.json`
+- Channel subscriptions: `~/zylos/components/ms-teams/channel-subscriptions.json`
 
 ## Environment Variables
 
@@ -222,9 +222,9 @@ When `~/zylos/bin/transcribe` exists, audio attachments are transcribed and forw
 ## Service Management
 
 ```bash
-pm2 status zylos-teams
-pm2 logs zylos-teams
-pm2 restart zylos-teams
+pm2 status zylos-ms-teams
+pm2 logs zylos-ms-teams
+pm2 restart zylos-ms-teams
 ```
 
-Run `node ~/zylos/.claude/skills/teams/src/admin.js help` for all commands.
+Run `node ~/zylos/.claude/skills/ms-teams/src/admin.js help` for all commands.

@@ -263,7 +263,7 @@ async function downloadAttachments(attachments, tokenProvider) {
       const media = await downloadAndSave(candidate.url, candidate.fileHint, candidate.contentTypeHint, tokenProvider);
       if (media) out.push(media);
     } catch (err) {
-      console.warn(`[teams/attachments] download failed: ${err.message}`);
+      console.warn(`[ms-teams/attachments] download failed: ${err.message}`);
     }
   }
   return out;
@@ -277,7 +277,7 @@ async function downloadBotFrameworkAttachments({ serviceUrl, attachmentIds, toke
   try {
     accessToken = await tokenProvider(BOT_FRAMEWORK_SCOPE);
   } catch (err) {
-    console.warn(`[teams/attachments] BF token failed: ${err.message}`);
+    console.warn(`[ms-teams/attachments] BF token failed: ${err.message}`);
     return [];
   }
   if (!accessToken) return [];
@@ -325,7 +325,7 @@ async function downloadBotFrameworkAttachments({ serviceUrl, attachmentIds, toke
         placeholder: inferPlaceholder(mime, fileHint),
       });
     } catch (err) {
-      console.warn(`[teams/attachments] BF attachment download failed: ${err.message}`);
+      console.warn(`[ms-teams/attachments] BF attachment download failed: ${err.message}`);
     }
   }
   return out;
@@ -339,7 +339,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
   try {
     accessToken = await tokenProvider(GRAPH_SCOPE);
   } catch (err) {
-    console.warn(`[teams/attachments] Graph token failed: ${err.message}`);
+    console.warn(`[ms-teams/attachments] Graph token failed: ${err.message}`);
     return [];
   }
   if (!accessToken) return [];
@@ -353,20 +353,20 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
       const msgRes = await fetch(messageUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      console.debug(`[teams/attachments] Graph fetch ${messageUrl} → ${msgRes.status}`);
+      console.debug(`[ms-teams/attachments] Graph fetch ${messageUrl} → ${msgRes.status}`);
       if (!msgRes.ok) {
         const errBody = await msgRes.text().catch(() => '');
-        console.debug(`[teams/attachments] Graph error body: ${errBody.substring(0, 300)}`);
+        console.debug(`[ms-teams/attachments] Graph error body: ${errBody.substring(0, 300)}`);
         continue;
       }
       msgData = await msgRes.json();
     } catch (err) {
-      console.warn(`[teams/attachments] Graph message fetch failed: ${err.message}`);
+      console.warn(`[ms-teams/attachments] Graph message fetch failed: ${err.message}`);
       continue;
     }
 
     const attachments = Array.isArray(msgData.attachments) ? msgData.attachments : [];
-    console.debug(`[teams/attachments] Graph message attachments: ${JSON.stringify(attachments.map(a => ({ id: a.id, contentType: a.contentType, name: a.name, contentUrl: (a.contentUrl || '').substring(0, 100) })))}`);
+    console.debug(`[ms-teams/attachments] Graph message attachments: ${JSON.stringify(attachments.map(a => ({ id: a.id, contentType: a.contentType, name: a.name, contentUrl: (a.contentUrl || '').substring(0, 100) })))}`);
 
     // Download SharePoint "reference" attachments via /shares/ endpoint
     for (const att of attachments) {
@@ -390,7 +390,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
         const savedPath = await saveBuffer(buffer, name);
         out.push({ path: savedPath, contentType: mime, placeholder: inferPlaceholder(mime, name) });
       } catch (err) {
-        console.warn(`[teams/attachments] SharePoint download failed: ${err.message}`);
+        console.warn(`[ms-teams/attachments] SharePoint download failed: ${err.message}`);
       }
     }
 
@@ -424,7 +424,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
         }
       }
     } catch (err) {
-      console.warn(`[teams/attachments] Graph hosted content fetch failed: ${err.message}`);
+      console.warn(`[ms-teams/attachments] Graph hosted content fetch failed: ${err.message}`);
     }
 
     // Also download remaining non-reference attachments from Graph message
@@ -439,7 +439,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
           (scope) => tokenProvider(scope));
         if (media) out.push(media);
       } catch (err) {
-        console.warn(`[teams/attachments] Graph attachment download failed: ${err.message}`);
+        console.warn(`[ms-teams/attachments] Graph attachment download failed: ${err.message}`);
       }
     }
 
@@ -577,7 +577,7 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
   // Tier 1: direct download from activity attachments
   let media = await downloadAttachments(attachments, tokenProvider);
   if (media.length > 0) {
-    console.log(`[teams/attachments] Tier 1: downloaded ${media.length} file(s)`);
+    console.log(`[ms-teams/attachments] Tier 1: downloaded ${media.length} file(s)`);
     return media;
   }
 
@@ -592,7 +592,7 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
   // Tier 2: Bot Framework v3 endpoint (for DM conversations)
   if (attachmentIds.length > 0 && isBotFrameworkPersonalChatId(conversationId)) {
     if (!serviceUrl) {
-      console.debug('[teams/attachments] BF attachment skipped (missing serviceUrl)');
+      console.debug('[ms-teams/attachments] BF attachment skipped (missing serviceUrl)');
     } else {
       media = await downloadBotFrameworkAttachments({
         serviceUrl,
@@ -600,7 +600,7 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
         tokenProvider,
       });
       if (media.length > 0) {
-        console.log(`[teams/attachments] Tier 2 (BF v3): downloaded ${media.length} file(s)`);
+        console.log(`[ms-teams/attachments] Tier 2 (BF v3): downloaded ${media.length} file(s)`);
         return media;
       }
     }
@@ -609,12 +609,12 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
   // Tier 3: Graph API (for group/channel, or when BF fails)
   if (!isBotFrameworkPersonalChatId(conversationId) && tokenProvider) {
     const messageUrls = buildGraphMessageUrls({ conversationType, conversationId, activity });
-    console.debug(`[teams/attachments] Tier 3: messageUrls=${JSON.stringify(messageUrls)}`);
+    console.debug(`[ms-teams/attachments] Tier 3: messageUrls=${JSON.stringify(messageUrls)}`);
     if (messageUrls.length > 0) {
       media = await downloadGraphMedia({ messageUrls, tokenProvider });
-      console.debug(`[teams/attachments] Tier 3: downloadGraphMedia returned ${media.length} file(s)`);
+      console.debug(`[ms-teams/attachments] Tier 3: downloadGraphMedia returned ${media.length} file(s)`);
       if (media.length > 0) {
-        console.log(`[teams/attachments] Tier 3 (Graph): downloaded ${media.length} file(s)`);
+        console.log(`[ms-teams/attachments] Tier 3 (Graph): downloaded ${media.length} file(s)`);
         return media;
       }
     }
@@ -622,11 +622,11 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
     // Tier 3b: check nearby messages for file uploads sent separately from @mention
     media = await downloadGraphNearbyFiles({ conversationType, conversationId, activity, tokenProvider });
     if (media.length > 0) {
-      console.log(`[teams/attachments] Tier 3b (Graph nearby): downloaded ${media.length} file(s)`);
+      console.log(`[ms-teams/attachments] Tier 3b (Graph nearby): downloaded ${media.length} file(s)`);
       return media;
     }
   } else {
-    console.debug(`[teams/attachments] Tier 3 skipped: isBF=${isBotFrameworkPersonalChatId(conversationId)}, hasToken=${!!tokenProvider}`);
+    console.debug(`[ms-teams/attachments] Tier 3 skipped: isBF=${isBotFrameworkPersonalChatId(conversationId)}, hasToken=${!!tokenProvider}`);
   }
 
   return [];

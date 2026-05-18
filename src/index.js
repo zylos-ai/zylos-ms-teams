@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * zylos-teams - Microsoft Teams Bot Service
+ * zylos-ms-teams - Microsoft Teams Bot Service
  *
  * Uses @microsoft/teams.apps v2 SDK for receiving/sending Teams messages
  * and routes inbound messages to Claude via C4 Communication Bridge.
@@ -52,11 +52,11 @@ try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(TOKEN_FILE, INTERNAL_TOKEN, { mode: 0o600 });
 } catch (err) {
-  console.error(`[teams] Failed to write internal token file: ${err.message}`);
+  console.error(`[ms-teams] Failed to write internal token file: ${err.message}`);
 }
 
-console.log('[teams] Starting...');
-console.log(`[teams] Data directory: ${DATA_DIR}`);
+console.log('[ms-teams] Starting...');
+console.log(`[ms-teams] Data directory: ${DATA_DIR}`);
 
 const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
 let VOICE_ENABLED = false;
@@ -64,7 +64,7 @@ try {
   execFileSync(TRANSCRIBE_SCRIPT, ['--check'], { timeout: 15000 });
   VOICE_ENABLED = true;
 } catch {}
-console.log(`[teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (whisper or transcribe.py not found)'}`);
+console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (whisper or transcribe.py not found)'}`);
 
 function transcribeAudio(audioPath) {
   return new Promise((resolve, reject) => {
@@ -79,7 +79,7 @@ function transcribeAudio(audioPath) {
 const messageDeduper = createMessageDeduper({
   ttlMs: MESSAGE_DEDUP_TTL_MS,
   logDuplicate: (messageId) => {
-    console.log(`[teams] Duplicate activity ${messageId}, skipping`);
+    console.log(`[ms-teams] Duplicate activity ${messageId}, skipping`);
   }
 });
 
@@ -144,18 +144,18 @@ function formatContextBlock(messages) {
 
 // Load configuration
 let config = getConfig();
-console.log(`[teams] Config loaded, enabled: ${config.enabled}`);
+console.log(`[ms-teams] Config loaded, enabled: ${config.enabled}`);
 
 if (!config.enabled) {
-  console.log('[teams] Component disabled in config, exiting.');
+  console.log('[ms-teams] Component disabled in config, exiting.');
   process.exit(0);
 }
 
 watchConfig(async (newConfig) => {
-  console.log('[teams] Config reloaded');
+  console.log('[ms-teams] Config reloaded');
   config = newConfig;
   if (!newConfig.enabled) {
-    console.log('[teams] Component disabled, stopping...');
+    console.log('[ms-teams] Component disabled, stopping...');
     shutdown();
     return;
   }
@@ -163,16 +163,16 @@ watchConfig(async (newConfig) => {
   try {
     await initChannelSubscriptions();
   } catch (err) {
-    console.warn(`[teams/subs] Re-sync on config reload failed: ${err.message}`);
+    console.warn(`[ms-teams/subs] Re-sync on config reload failed: ${err.message}`);
   }
 });
 
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
-  console.error('[teams] WARNING: MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not set in ~/zylos/.env');
-  console.error('[teams] The bot will start but cannot authenticate with Teams.');
-  console.error('[teams] Set credentials and restart: pm2 restart zylos-teams');
+  console.error('[ms-teams] WARNING: MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not set in ~/zylos/.env');
+  console.error('[ms-teams] The bot will start but cannot authenticate with Teams.');
+  console.error('[ms-teams] Set credentials and restart: pm2 restart zylos-ms-teams');
 }
 
 // Bot identity
@@ -222,10 +222,10 @@ async function bindOwner(aadObjectId, name) {
   };
   if (!saveConfig(config)) {
     config.owner = previousOwner;
-    console.error('[teams] Failed to persist owner binding');
+    console.error('[ms-teams] Failed to persist owner binding');
     return null;
   }
-  console.log(`[teams] Owner bound: ${name} (${aadObjectId})`);
+  console.log(`[ms-teams] Owner bound: ${name} (${aadObjectId})`);
   return name;
 }
 
@@ -317,7 +317,7 @@ function replaceBotMention(activity) {
  */
 function sendToC4(source, endpoint, content, onReject) {
   if (!content) {
-    console.error('[teams] sendToC4 called with empty content');
+    console.error('[ms-teams] sendToC4 called with empty content');
     return;
   }
   const args = [
@@ -330,28 +330,28 @@ function sendToC4(source, endpoint, content, onReject) {
 
   execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (error, stdout) => {
     if (!error) {
-      console.log(`[teams] Sent to C4: ${content.substring(0, 50)}...`);
+      console.log(`[ms-teams] Sent to C4: ${content.substring(0, 50)}...`);
       return;
     }
     const response = parseC4Response(error.stdout || stdout);
     if (response && response.ok === false && response.error?.message) {
-      console.warn(`[teams] C4 rejected (${response.error.code}): ${response.error.message}`);
+      console.warn(`[ms-teams] C4 rejected (${response.error.code}): ${response.error.message}`);
       if (onReject) onReject(response.error.message);
       return;
     }
-    console.warn(`[teams] C4 send failed, retrying in 2s: ${error.message}`);
+    console.warn(`[ms-teams] C4 send failed, retrying in 2s: ${error.message}`);
     setTimeout(() => {
       execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (retryError, retryStdout) => {
         if (!retryError) {
-          console.log(`[teams] Sent to C4 (retry): ${content.substring(0, 50)}...`);
+          console.log(`[ms-teams] Sent to C4 (retry): ${content.substring(0, 50)}...`);
           return;
         }
         const retryResponse = parseC4Response(retryError.stdout || retryStdout);
         if (retryResponse && retryResponse.ok === false && retryResponse.error?.message) {
-          console.error(`[teams] C4 rejected after retry (${retryResponse.error.code}): ${retryResponse.error.message}`);
+          console.error(`[ms-teams] C4 rejected after retry (${retryResponse.error.code}): ${retryResponse.error.message}`);
           if (onReject) onReject(retryResponse.error.message);
         } else {
-          console.error(`[teams] C4 send failed after retry: ${retryError.message}`);
+          console.error(`[ms-teams] C4 send failed after retry: ${retryError.message}`);
         }
       });
     }, 2000);
@@ -427,7 +427,7 @@ async function handleMessage(ctx) {
   // Extract quoted reply if present
   const quotedReply = extractQuotedReply(activity);
 
-  console.log(`[teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
+  console.log(`[ms-teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
   // Record in chat history (for group context), with bot mention stripped
   const historyText = htmlToText(stripBotMention(activity));
@@ -465,7 +465,7 @@ async function handleMessage(ctx) {
     try {
       await ctx.send(errMsg);
     } catch (err) {
-      console.error(`[teams] Failed to send reject reply: ${err.message}`);
+      console.error(`[ms-teams] Failed to send reject reply: ${err.message}`);
     }
   };
 
@@ -475,7 +475,7 @@ async function handleMessage(ctx) {
     }
 
     if (!isDmAllowed(senderAadObjectId)) {
-      console.log(`[teams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
+      console.log(`[ms-teams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
       await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
       return;
     }
@@ -491,7 +491,7 @@ async function handleMessage(ctx) {
           messageId: activityId,
           reactionType: '💬',
           activity,
-        }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+        }).catch(err => console.debug(`[ms-teams] Auto-react skipped: ${err.message}`));
       }
     }
 
@@ -505,19 +505,19 @@ async function handleMessage(ctx) {
     if (audioFile && VOICE_ENABLED) {
       try {
         const transcript = await transcribeAudio(audioFile.path);
-        console.log(`[teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
+        console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
         const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
-        sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+        sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
         fs.unlink(audioFile.path, () => {});
         return;
       } catch (err) {
-        console.error(`[teams] Voice transcription error: ${err.message}`);
+        console.error(`[ms-teams] Voice transcription error: ${err.message}`);
       }
     }
 
     let msg = formatMessage('dm', senderName, text, { quotedReply });
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
-    sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
 
@@ -531,7 +531,7 @@ async function handleMessage(ctx) {
     const smartNoMention = smart && !mentioned;
 
     if (groupPolicy === 'disabled') {
-      console.log(`[teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
+      console.log(`[ms-teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
       return;
     }
 
@@ -540,7 +540,7 @@ async function handleMessage(ctx) {
     if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
       if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
         if (mentioned) {
-          console.log(`[teams] User ${senderAadObjectId} not in route allowFrom, rejecting`);
+          console.log(`[ms-teams] User ${senderAadObjectId} not in route allowFrom, rejecting`);
           await ctx.send("Sorry, you don't have access in this channel.");
         }
         return;
@@ -549,7 +549,7 @@ async function handleMessage(ctx) {
 
     if (!allowedGroup && !senderIsOwner) {
       if (mentioned) {
-        console.log(`[teams] Group ${conversationId} not allowed, rejecting`);
+        console.log(`[ms-teams] Group ${conversationId} not allowed, rejecting`);
         await ctx.send("Sorry, I'm not available in this group.");
       }
       return;
@@ -585,7 +585,7 @@ async function handleMessage(ctx) {
           messageId: activityId,
           reactionType: '💬',
           activity,
-        }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+        }).catch(err => console.debug(`[ms-teams] Auto-react skipped: ${err.message}`));
       }
     }
 
@@ -631,7 +631,7 @@ async function handleMessage(ctx) {
         }
         contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
       } catch (err) {
-        console.warn(`[teams] Graph context fetch failed: ${err.message}`);
+        console.warn(`[ms-teams] Graph context fetch failed: ${err.message}`);
       }
     }
 
@@ -640,10 +640,10 @@ async function handleMessage(ctx) {
     // Voice auto-download detection
     const allAtts = activity.attachments || [];
     if (allAtts.length > 0) {
-      console.log(`[teams] Attachments (${allAtts.length}): ${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: (a.contentUrl || '').substring(0, 120), name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 500) : JSON.stringify(a.content)?.substring(0, 500) })))}`);
+      console.log(`[ms-teams] Attachments (${allAtts.length}): ${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: (a.contentUrl || '').substring(0, 120), name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 500) : JSON.stringify(a.content)?.substring(0, 500) })))}`);
     }
     if (smartNoMention) {
-      console.log(`[teams] Smart-no-mention debug: text=${JSON.stringify((activity.text || '').substring(0, 200))}, attachments=${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: a.contentUrl, name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 300) : JSON.stringify(a.content)?.substring(0, 300) })))}, channelData=${JSON.stringify(activity.channelData || {})}`);
+      console.log(`[ms-teams] Smart-no-mention debug: text=${JSON.stringify((activity.text || '').substring(0, 200))}, attachments=${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: a.contentUrl, name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 300) : JSON.stringify(a.content)?.substring(0, 300) })))}, channelData=${JSON.stringify(activity.channelData || {})}`);
     }
     const nonHtmlAtts = allAtts.filter(a => !(a.contentType || '').startsWith('text/html'));
     const hasVoiceAttachment = (() => {
@@ -674,11 +674,11 @@ async function handleMessage(ctx) {
       if (audioFile) {
         try {
           const transcript = await transcribeAudio(audioFile.path);
-          console.log(`[teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
+          console.log(`[ms-teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
           cleanText = `[Voice] ${transcript}`;
           fs.unlink(audioFile.path, () => {});
         } catch (err) {
-          console.error(`[teams] Voice transcription error: ${err.message}`);
+          console.error(`[ms-teams] Voice transcription error: ${err.message}`);
         }
       }
     }
@@ -702,13 +702,13 @@ async function handleMessage(ctx) {
       } else {
         dlCmd = `chat ${conversationId} ${activityId}`;
       }
-      msg += ` ---- download: node ~/zylos/.claude/skills/teams/scripts/download-attachments.js ${dlCmd}`;
+      msg += ` ---- download: node ~/zylos/.claude/skills/ms-teams/scripts/download-attachments.js ${dlCmd}`;
     }
     for (const media of mediaFiles) {
       if (media.contentType?.startsWith('audio/') || media.contentType?.startsWith('video/')) continue;
       msg += ` ---- file: ${escapeXml(media.path)}`;
     }
-    sendToC4('teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
     return;
   }
 }
@@ -718,11 +718,11 @@ teamsApp.on('message', async (ctx) => {
   try {
     await handleMessage(ctx);
   } catch (err) {
-    console.error(`[teams] Error handling message: ${err.message}`);
+    console.error(`[ms-teams] Error handling message: ${err.message}`);
     try {
       await ctx.send('Sorry, something went wrong processing your message.');
     } catch (sendErr) {
-      console.error(`[teams] Failed to send error response: ${sendErr.message}`);
+      console.error(`[ms-teams] Failed to send error response: ${sendErr.message}`);
     }
   }
 });
@@ -738,7 +738,7 @@ teamsApp.on('conversationUpdate', async (ctx) => {
     for (const member of membersAdded) {
       if (member.id !== activity.recipient?.id) continue;
 
-      console.log(`[teams] Bot added to conversation: ${conversationId}`);
+      console.log(`[ms-teams] Bot added to conversation: ${conversationId}`);
       saveConvRef(activity, ctx.ref);
 
       // Auto-add handling for group chats and channels
@@ -764,7 +764,7 @@ teamsApp.on('conversationUpdate', async (ctx) => {
                 added_at: new Date().toISOString(),
               };
               saveConfig(config);
-              console.log(`[teams] Auto-approved channel: ${chatTitle} (added by owner)`);
+              console.log(`[ms-teams] Auto-approved channel: ${chatTitle} (added by owner)`);
               try {
                 await ctx.send(`Channel added. Members can @mention me to chat.`);
               } catch {}
@@ -780,7 +780,7 @@ teamsApp.on('conversationUpdate', async (ctx) => {
                 added_at: new Date().toISOString(),
               };
               saveConfig(config);
-              console.log(`[teams] Auto-approved group: ${chatTitle} (added by owner)`);
+              console.log(`[ms-teams] Auto-approved group: ${chatTitle} (added by owner)`);
               try {
                 await ctx.send(`Group added. Members can @mention me to chat.`);
               } catch {}
@@ -788,14 +788,14 @@ teamsApp.on('conversationUpdate', async (ctx) => {
           }
         } else {
           // Non-owner added bot → pending approval, notify owner
-          console.log(`[teams] Bot added by non-owner ${adderName} (${adderAadId}), pending approval`);
+          console.log(`[ms-teams] Bot added by non-owner ${adderName} (${adderAadId}), pending approval`);
           try {
             await ctx.send('Bot joined, but requires admin approval to respond.');
           } catch {}
           // Notify owner via DM if we have their conversation reference
           if (config.owner?.aadObjectId) {
             const chatTitle = activity.conversation?.name || conversationId;
-            const notifyMsg = `Bot was added to a group, pending approval:\nGroup: ${chatTitle}\nID: ${conversationId}\nAdded by: ${adderName}\n\nTo approve, run:\nzylos-teams add-group "${conversationId}" "${chatTitle}"`;
+            const notifyMsg = `Bot was added to a group, pending approval:\nGroup: ${chatTitle}\nID: ${conversationId}\nAdded by: ${adderName}\n\nTo approve, run:\nzylos-ms-teams add-group "${conversationId}" "${chatTitle}"`;
             const allRefs = getAllConversationReferences();
             const ownerDmRef = Object.entries(allRefs).find(([id, ref]) =>
               id.startsWith('a:') && ref.user?.aadObjectId === config.owner.aadObjectId
@@ -803,25 +803,25 @@ teamsApp.on('conversationUpdate', async (ctx) => {
             if (ownerDmRef) {
               try {
                 await teamsApp.send(ownerDmRef[0], { type: 'message', text: notifyMsg });
-                console.log(`[teams] Notified owner about pending group: ${chatTitle}`);
+                console.log(`[ms-teams] Notified owner about pending group: ${chatTitle}`);
               } catch (err) {
-                console.warn(`[teams] Failed to notify owner: ${err.message}`);
+                console.warn(`[ms-teams] Failed to notify owner: ${err.message}`);
               }
             } else {
-              console.log(`[teams] No owner DM reference found. Pending group: ${chatTitle} (${conversationId})`);
+              console.log(`[ms-teams] No owner DM reference found. Pending group: ${chatTitle} (${conversationId})`);
             }
           }
         }
       }
     }
   } catch (err) {
-    console.error(`[teams] Error handling conversationUpdate: ${err.message}`);
+    console.error(`[ms-teams] Error handling conversationUpdate: ${err.message}`);
   }
 });
 
 // Error handler
 teamsApp.event('error', (event) => {
-  console.error(`[teams] App error: ${event?.error?.message || 'unknown error'}`);
+  console.error(`[ms-teams] App error: ${event?.error?.message || 'unknown error'}`);
 });
 
 // ── Internal send endpoint (accessed by send.js via localhost) ──
@@ -888,7 +888,7 @@ expressApp.post('/internal/send', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error(`[teams] Internal send error: ${err.message}`);
+    console.error(`[ms-teams] Internal send error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -942,7 +942,7 @@ expressApp.post('/internal/send-media', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error(`[teams] Internal send-media error: ${err.message}`);
+    console.error(`[ms-teams] Internal send-media error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -953,7 +953,7 @@ expressApp.get('/health', (req, res) => {
   const healthConfig = getConfig();
   res.json({
     status: 'ok',
-    service: 'zylos-teams',
+    service: 'zylos-ms-teams',
     uptime: Math.floor(process.uptime()),
     hasCredentials: !!(credentials.appId && credentials.appPassword),
     hasGraph: isGraphEnabled(),
@@ -968,7 +968,7 @@ expressApp.get('/auth/callback', async (req, res) => {
   const { code, state, error, error_description } = req.query;
 
   if (error) {
-    console.error(`[teams/auth] OAuth error: ${error} — ${error_description}`);
+    console.error(`[ms-teams/auth] OAuth error: ${error} — ${error_description}`);
     return res.status(400).send(`Authentication failed: ${error_description || error}`);
   }
 
@@ -988,7 +988,7 @@ expressApp.get('/auth/callback', async (req, res) => {
     const { aadObjectId, displayName } = await exchangeCode(code, state, redirectUri);
     res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Signed in successfully</h2><p>${displayName}, your delegated auth is now active.</p><p>You can close this tab and return to Teams.</p></body></html>`);
   } catch (err) {
-    console.error(`[teams/auth] Token exchange failed: ${err.message}`);
+    console.error(`[ms-teams/auth] Token exchange failed: ${err.message}`);
     res.status(500).send('Authentication failed. Please try again.');
   }
 });
@@ -1047,7 +1047,7 @@ expressApp.post('/internal/react', async (req, res) => {
     });
     res.json({ ok: true });
   } catch (err) {
-    console.error(`[teams] Internal react error: ${err.message}`);
+    console.error(`[ms-teams] Internal react error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1058,7 +1058,7 @@ expressApp.use('/api/notifications', express.json());
 expressApp.post('/api/notifications', async (req, res) => {
   // Subscription validation handshake
   if (req.query.validationToken) {
-    console.log('[teams/subs] Validation handshake received');
+    console.log('[ms-teams/subs] Validation handshake received');
     res.set('Content-Type', 'text/plain');
     return res.status(200).send(req.query.validationToken);
   }
@@ -1070,7 +1070,7 @@ expressApp.post('/api/notifications', async (req, res) => {
     try {
       await handleChannelNotification(notification);
     } catch (err) {
-      console.error(`[teams/subs] Notification error: ${err.message}`);
+      console.error(`[ms-teams/subs] Notification error: ${err.message}`);
     }
   }
 });
@@ -1084,7 +1084,7 @@ async function handleChannelNotification(notification) {
   const replyMatch = resource.match(/replies\('([^']+)'\)/);
 
   if (!teamMatch || !channelMatch) {
-    console.debug(`[teams/subs] Skipping notification with unrecognized resource: ${resource}`);
+    console.debug(`[ms-teams/subs] Skipping notification with unrecognized resource: ${resource}`);
     return;
   }
 
@@ -1104,7 +1104,7 @@ async function handleChannelNotification(notification) {
       graphMsg = await fetchMessage(teamId, channelId, messageId);
     }
   } catch (err) {
-    console.warn(`[teams/subs] Failed to fetch message ${messageId}: ${err.message}`);
+    console.warn(`[ms-teams/subs] Failed to fetch message ${messageId}: ${err.message}`);
     return;
   }
 
@@ -1194,10 +1194,10 @@ async function handleChannelNotification(notification) {
   const dlArgs = rootMessageId
     ? `channel ${teamId} ${channelId} ${messageId} ${rootMessageId}`
     : `channel ${teamId} ${channelId} ${messageId}`;
-  msg += ` ---- download: node ~/zylos/.claude/skills/teams/scripts/download-attachments.js ${dlArgs}`;
+  msg += ` ---- download: node ~/zylos/.claude/skills/ms-teams/scripts/download-attachments.js ${dlArgs}`;
 
-  console.log(`[teams/subs] Smart channel message from ${senderName}: ${text.substring(0, 50)}${hasAttachments ? ` (${graphAttachments.length} attachment(s))` : ''}...`);
-  sendToC4('teams', endpoint, msg);
+  console.log(`[ms-teams/subs] Smart channel message from ${senderName}: ${text.substring(0, 50)}${hasAttachments ? ` (${graphAttachments.length} attachment(s))` : ''}...`);
+  sendToC4('ms-teams', endpoint, msg);
 }
 
 // ── Lifecycle ──
@@ -1207,7 +1207,7 @@ let isShuttingDown = false;
 function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log('[teams] Shutting down...');
+  console.log('[ms-teams] Shutting down...');
   clearInterval(dedupCleanupInterval);
   stopRenewalLoop();
   stopWatching();
@@ -1246,7 +1246,7 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
     } catch (err) {
       if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
         const delay = attempt * 1000;
-        console.error(`[teams] Port ${port} in use (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+        console.error(`[ms-teams] Port ${port} in use (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
@@ -1284,34 +1284,34 @@ async function initChannelSubscriptions() {
 
   const publicUrl = await getPublicUrl();
   if (!publicUrl) {
-    console.warn('[teams/subs] No public URL found (set MSTEAMS_PUBLIC_URL or run ngrok). Channel subscriptions disabled.');
+    console.warn('[ms-teams/subs] No public URL found (set MSTEAMS_PUBLIC_URL or run ngrok). Channel subscriptions disabled.');
     return;
   }
 
   const notificationUrl = `${publicUrl.replace(/\/$/, '')}/api/notifications`;
-  console.log(`[teams/subs] Notification URL: ${notificationUrl}`);
+  console.log(`[ms-teams/subs] Notification URL: ${notificationUrl}`);
 
   try {
     await syncSubscriptions(channels, notificationUrl);
     startRenewalLoop();
-    console.log(`[teams/subs] Channel subscriptions active`);
+    console.log(`[ms-teams/subs] Channel subscriptions active`);
   } catch (err) {
-    console.error(`[teams/subs] Failed to initialize subscriptions: ${err.message}`);
+    console.error(`[ms-teams/subs] Failed to initialize subscriptions: ${err.message}`);
   }
 }
 
 (async () => {
   await startServerWithRetry(PORT);
   httpServer.on('error', (err) => {
-    console.error(`[teams] Server error: ${err.message}`);
+    console.error(`[ms-teams] Server error: ${err.message}`);
   });
-  console.log(`[teams] HTTP server running on 127.0.0.1:${PORT}`);
-  console.log(`[teams] Bot identity: ${botName} (${botId || 'no app ID'})`);
-  console.log(`[teams] Credentials: ${credentials.appId ? 'configured' : 'MISSING'}`);
-  console.log(`[teams] DM policy: ${config.dmPolicy || 'owner'}, Group policy: ${config.groupPolicy || 'allowlist'}`);
+  console.log(`[ms-teams] HTTP server running on 127.0.0.1:${PORT}`);
+  console.log(`[ms-teams] Bot identity: ${botName} (${botId || 'no app ID'})`);
+  console.log(`[ms-teams] Credentials: ${credentials.appId ? 'configured' : 'MISSING'}`);
+  console.log(`[ms-teams] DM policy: ${config.dmPolicy || 'owner'}, Group policy: ${config.groupPolicy || 'allowlist'}`);
 
   await initChannelSubscriptions();
 })().catch((err) => {
-  console.error(`[teams] Fatal startup error: ${err.message}`);
+  console.error(`[ms-teams] Fatal startup error: ${err.message}`);
   process.exit(1);
 });

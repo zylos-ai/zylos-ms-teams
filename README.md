@@ -2,7 +2,7 @@
   <img src="./assets/logo.png" alt="Zylos" height="120">
 </p>
 
-<h1 align="center">zylos-teams</h1>
+<h1 align="center">zylos-ms-teams</h1>
 
 <p align="center">
   Microsoft Teams communication channel for <a href="https://github.com/zylos-ai/zylos-core">Zylos</a> agents.
@@ -28,12 +28,12 @@
 
 Tell your Zylos agent:
 
-> "Install the teams component"
+> "Install the ms-teams component"
 
 Or use the CLI:
 
 ```bash
-zylos add teams
+zylos add ms-teams
 ```
 
 Zylos will guide you through the setup, including obtaining Azure Bot Registration credentials. Once installed, message your bot on Teams — the first user to DM becomes the owner.
@@ -78,7 +78,7 @@ https://<your-domain>/teams/api/messages
 
 ### Runtime Config
 
-Config file: `~/zylos/components/teams/config.json`
+Config file: `~/zylos/components/ms-teams/config.json`
 
 ```json
 {
@@ -102,17 +102,17 @@ Just tell your Zylos agent what you need:
 
 | Task | Example |
 |------|---------|
-| Add user to DM allowlist | "Add user X to teams DM allowlist" |
+| Add user to DM allowlist | "Add user X to ms-teams DM allowlist" |
 | Enable smart group | "Set this Teams group to smart mode" |
-| Add a channel | "Add the General channel to teams" |
-| Check status | "Show teams bot status" |
-| Restart bot | "Restart teams bot" |
-| Upgrade | "Upgrade teams component" |
+| Add a channel | "Add the General channel to ms-teams" |
+| Check status | "Show ms-teams bot status" |
+| Restart bot | "Restart ms-teams bot" |
+| Upgrade | "Upgrade ms-teams component" |
 
 Or manage via admin CLI:
 
 ```bash
-ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
+ADM="node ~/zylos/.claude/skills/ms-teams/src/admin.js"
 
 # General
 $ADM show                                       # Show full config

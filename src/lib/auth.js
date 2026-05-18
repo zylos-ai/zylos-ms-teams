@@ -35,7 +35,7 @@ function getEntraIssuer(tenantId) {
  */
 export function createJwtMiddleware({ appId, tenantId } = {}) {
   if (!appId) {
-    console.warn('[teams/auth] No appId provided, JWT validation will reject all requests');
+    console.warn('[ms-teams/auth] No appId provided, JWT validation will reject all requests');
   }
 
   // Create JWKS clients with built-in caching
@@ -157,7 +157,7 @@ export function createJwtMiddleware({ appId, tenantId } = {}) {
       req.jwtPayload = payload;
       next();
     } catch (err) {
-      console.warn(`[teams/auth] JWT validation failed: ${err.message}`);
+      console.warn(`[ms-teams/auth] JWT validation failed: ${err.message}`);
       res.status(401).json({ error: 'Invalid token' });
     }
   };

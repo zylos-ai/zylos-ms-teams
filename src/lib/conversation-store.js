@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/teams');
+const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const STORE_PATH = path.join(DATA_DIR, 'conversations.json');
 const LOCK_PATH = STORE_PATH + '.lock';
 
@@ -53,7 +53,7 @@ function acquireLock(timeoutMs = LOCK_TIMEOUT_MS) {
       return true;
     }
   }
-  console.warn('[teams/store] Lock acquisition timed out, proceeding without lock');
+  console.warn('[ms-teams/store] Lock acquisition timed out, proceeding without lock');
   return true;
 }
 
@@ -83,7 +83,7 @@ function pruneExpired(refs) {
     }
   }
   if (pruned > 0) {
-    console.log(`[teams/store] Pruned ${pruned} expired entries`);
+    console.log(`[ms-teams/store] Pruned ${pruned} expired entries`);
   }
   return refs;
 }
@@ -106,7 +106,7 @@ function pruneLRU(refs) {
   for (let i = 0; i < toRemove; i++) {
     delete refs[sorted[i]];
   }
-  console.log(`[teams/store] LRU pruned ${toRemove} entries (cap: ${MAX_ENTRIES})`);
+  console.log(`[ms-teams/store] LRU pruned ${toRemove} entries (cap: ${MAX_ENTRIES})`);
   return refs;
 }
 
@@ -135,7 +135,7 @@ function load() {
       references = {};
     }
   } catch (err) {
-    console.error(`[teams/store] Failed to load conversation store: ${err.message}`);
+    console.error(`[ms-teams/store] Failed to load conversation store: ${err.message}`);
     references = {};
   } finally {
     releaseLock();
@@ -154,7 +154,7 @@ function save() {
     fs.renameSync(tmpPath, STORE_PATH);
     return true;
   } catch (err) {
-    console.error(`[teams/store] Failed to save conversation store: ${err.message}`);
+    console.error(`[ms-teams/store] Failed to save conversation store: ${err.message}`);
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     } catch {}

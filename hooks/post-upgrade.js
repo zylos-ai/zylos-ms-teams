@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Post-upgrade hook for zylos-teams
+ * Post-upgrade hook for zylos-ms-teams
  *
  * Called by Claude after CLI upgrade completes.
  * CLI handles: stop service, backup, file sync, npm install, manifest.
@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
-const DATA_DIR = path.join(HOME, 'zylos/components/teams');
+const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const configPath = path.join(DATA_DIR, 'config.json');
 
 console.log('[post-upgrade] Running teams-specific migrations...\n');
