@@ -1,6 +1,6 @@
 ---
 name: teams
-version: 0.2.0
+version: 1.2.0
 description: >-
   Microsoft Teams communication channel.
   Use when: (1) replying to Teams messages (DM or group/channel @mentions),
@@ -20,12 +20,18 @@ lifecycle:
     entry: src/index.js
   data_dir: ~/zylos/components/teams
   hooks:
+    configure: hooks/configure.js
     post-install: hooks/post-install.js
     pre-upgrade: hooks/pre-upgrade.js
     post-upgrade: hooks/post-upgrade.js
   preserve:
     - config.json
+    - conversations.json
+    - delegated-tokens.json
+    - reaction-cache.json
+    - channel-subscriptions.json
     - data/
+    - logs/
 
 upgrade:
   repo: zylos-ai/zylos-teams
@@ -38,11 +44,21 @@ config:
     - name: MSTEAMS_APP_PASSWORD
       description: "Azure Bot Registration App Password (client secret)"
       sensitive: true
+  optional:
+    - name: MSTEAMS_TENANT_ID
+      description: "Azure AD Tenant ID (for single-tenant bots)"
+    - name: MSTEAMS_GRAPH_TOKEN
+      description: "Graph API token (enables chat history fallback)"
+      sensitive: true
 
 next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/teams/api/messages. 4) Start the service (pm2 restart zylos-teams)."
 
 http_routes:
   - path: /teams/api/messages
+    type: reverse_proxy
+    target: localhost:3978
+    strip_prefix: /teams
+  - path: /teams/api/notifications
     type: reverse_proxy
     target: localhost:3978
     strip_prefix: /teams
@@ -87,6 +103,14 @@ EOF
 
 Images are sent as inline base64 attachments. Other file types are sent as a text reference.
 
+## On-Demand Attachment Download
+
+For smart-mode conversations, attachments may not be included in the webhook payload. Use the on-demand download script:
+
+```bash
+node ~/zylos/.claude/skills/teams/scripts/download-attachments.js <conversationId> <messageId>
+```
+
 ## Admin CLI
 
 Manage bot configuration via `admin.js`:
@@ -95,33 +119,36 @@ Manage bot configuration via `admin.js`:
 ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
 
 # General
-$ADM show                                    # Show full config
-$ADM show-owner                              # Show current owner
-$ADM help                                    # Show all commands
+$ADM show                                       # Show full config
+$ADM show-owner                                  # Show current owner
+$ADM help                                        # Show all commands
 
 # DM Access Control
-$ADM set-dm-policy <open|allowlist|owner>     # Set DM policy
-$ADM list-dm-allow                            # Show DM policy + allowFrom list
-$ADM add-dm-allow <aad_object_id>             # Add user to dmAllowFrom
-$ADM remove-dm-allow <aad_object_id>          # Remove user from dmAllowFrom
+$ADM set-dm-policy <open|allowlist|owner>         # Set DM policy
+$ADM list-dm-allow                                # Show DM policy + allowFrom list
+$ADM add-dm-allow <aad_object_id>                 # Add user to dmAllowFrom
+$ADM remove-dm-allow <aad_object_id>              # Remove user from dmAllowFrom
 
-# Group Management
-$ADM list-groups                              # List all configured groups
-$ADM add-group <conversation_id> <name>       # Add group
-$ADM remove-group <conversation_id>           # Remove a group
-$ADM set-group-policy <disabled|allowlist|open>  # Set group policy
-$ADM set-group-mode <id> <mention|smart>      # Set group mode
+# Group Chat Management
+$ADM list-groups                                  # List all configured group chats
+$ADM add-group <conversation_id> <name>           # Add a group chat
+$ADM remove-group <conversation_id>               # Remove a group chat
+$ADM set-group-policy <disabled|allowlist|open>    # Set group policy
+$ADM set-group-mode <conv_id> <mention|smart>      # Set group chat mode
 
-# Team / Channel Overrides (for Teams with channels)
-$ADM list-teams                               # List configured team overrides
-$ADM add-team <teamId> <name>                 # Add team override
-$ADM remove-team <teamId>                     # Remove team override
-$ADM set-team-mention <teamId> <true|false>   # Require @mention in team
-$ADM add-channel <teamId> <channelId> <name>  # Add channel override
-$ADM remove-channel <teamId> <channelId>      # Remove channel override
+# Channel Management
+$ADM list-channels                                # List all configured channels
+$ADM add-channel <channelId> <teamId> <name>      # Add a channel
+$ADM remove-channel <channelId>                   # Remove a channel
+$ADM set-channel-mode <channelId> <mention|smart>  # Set channel mode
 
 # Diagnostics
-$ADM graph-status                             # Show Graph API configuration state
+$ADM graph-status                                 # Show Graph API configuration state
+
+# Delegated Auth (reactions)
+$ADM auth-status                                  # Show delegated auth users
+$ADM auth-url <base-url>                          # Generate sign-in URL
+$ADM auth-revoke <aad_object_id>                  # Revoke delegated auth for a user
 ```
 
 After changes, restart: `pm2 restart zylos-teams`
@@ -131,6 +158,9 @@ After changes, restart: `pm2 restart zylos-teams`
 - Config: `~/zylos/components/teams/config.json`
 - Logs: `~/zylos/components/teams/logs/`
 - Conversations: `~/zylos/components/teams/conversations.json`
+- Delegated tokens: `~/zylos/components/teams/delegated-tokens.json`
+- Reaction cache: `~/zylos/components/teams/reaction-cache.json`
+- Channel subscriptions: `~/zylos/components/teams/channel-subscriptions.json`
 
 ## Environment Variables
 
@@ -148,110 +178,46 @@ MSTEAMS_TENANT_ID=your_tenant_id
 MSTEAMS_GRAPH_TOKEN=your_graph_token
 ```
 
-Get credentials from your Azure Bot Registration:
-- Azure Portal: [portal.azure.com](https://portal.azure.com) -> Bot Services
-
-## Azure Bot Setup
-
-### Messaging Endpoint
-
-In the Azure Bot Registration settings, set the messaging endpoint to:
-```
-https://<your-domain>/teams/api/messages
-```
-
-The path is defined by `http_routes` in SKILL.md.
-
 ## Owner
 
-First user to send a private message becomes the owner (primary partner).
+First user to send a private message becomes the owner.
 Owner always bypasses all access checks (DM and group) regardless of policy settings.
-
-Owner info stored in config.json:
-```json
-{
-  "owner": {
-    "bound": true,
-    "aadObjectId": "xxx",
-    "name": "Howard"
-  }
-}
-```
 
 ## Access Control
 
 ### Permission Flow
 
-DM and group access are controlled by **independent** top-level policies:
-
-```json
-{
-  "dmPolicy": "owner",
-  "dmAllowFrom": ["aad-object-id-1"],
-  "groupPolicy": "allowlist",
-  "groups": { ... }
-}
-```
+DM and group access are controlled by **independent** top-level policies.
 
 **Private DM (dmPolicy):**
 1. Owner? -> always allowed
 2. `dmPolicy` = `open`? -> anyone can DM
 3. `dmPolicy` = `owner`? -> only owner can DM
-4. `dmPolicy` = `allowlist`? -> check `dmAllowFrom` list; not in list -> dropped
+4. `dmPolicy` = `allowlist`? -> check `dmAllowFrom` list
 
 **Group/channel message (groupPolicy):**
 1. `groupPolicy` = `disabled`? -> all group messages dropped
 2. `groupPolicy` = `open`? -> respond to @mentions from any group
-3. `groupPolicy` = `allowlist`? -> only configured groups; unlisted groups -> only owner passes
+3. `groupPolicy` = `allowlist`? -> only configured groups; owner always passes
 
-**Key points:**
-- Owner always bypasses all access checks
-- `dmPolicy` and `groupPolicy` are fully independent
-
-Per-group options: `mode` (mention/smart), `allowFrom` (restrict senders), `historyLimit`.
+Per-group/channel options: `mode` (mention/smart), `allowFrom` (restrict senders), `historyLimit`.
 
 ## Smart Mode
 
-Groups can operate in two modes:
+Groups and channels can operate in two modes:
 
 - **mention** (default): Bot only responds to @mentions
-- **smart**: Bot receives all messages; Claude decides whether to respond (non-mention messages include a `[smart hint: not directly addressed]` tag)
+- **smart**: Bot receives all messages; agent decides whether to respond
 
-Set via admin CLI: `admin.js set-group-mode <conversation_id> <mention|smart>`
-
-In smart mode without @mention:
-- Typing indicator is suppressed
-- Attachments are not downloaded (metadata-only note appended instead)
-- Claude sees the full conversation but can choose to `[SKIP]`
+Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every 10 min) to receive messages without @mention.
 
 ## Group Context
 
-When responding in groups, the bot includes recent message history so Claude understands the conversation.
-
-Context is built from in-memory history (populated by incoming messages), with Graph API fallback when history is empty (requires `MSTEAMS_GRAPH_TOKEN` in `.env`).
-
-Configuration in `config.json`:
-```json
-{
-  "message": {
-    "context_messages": 10
-  }
-}
-```
-
-Per-group override via `historyLimit` in the group config.
-
-### Cold-Start Replay
-
-Chat history is persisted to JSONL files in `~/zylos/components/teams/logs/`. On restart, history is replayed from disk so group context is available immediately without relying on Graph API.
-
-Log files: `<sanitized_chat_id>.jsonl` (one JSON object per line).
+Recent message history is included for group/channel replies. Context is built from in-memory history with Graph API fallback. Chat history is persisted to JSONL files for cold-start replay.
 
 ## Voice Messages
 
-When `~/zylos/bin/transcribe` exists (voice-asr skill installed), audio attachments are transcribed and forwarded as `[Voice] <transcription>`. The original audio file is cleaned up after transcription.
-
-If the transcribe script is not installed, voice messages are forwarded as regular file attachments.
+When `~/zylos/bin/transcribe` exists, audio attachments are transcribed and forwarded as `[Voice] <transcription>`.
 
 ## Service Management
 
@@ -260,3 +226,5 @@ pm2 status zylos-teams
 pm2 logs zylos-teams
 pm2 restart zylos-teams
 ```
+
+Run `node ~/zylos/.claude/skills/teams/src/admin.js help` for all commands.

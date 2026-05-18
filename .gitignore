@@ -27,3 +27,12 @@ build/
 # Temporary files
 *.tmp
 *.bak
+
+# Runtime data
+.zylos/
+.claude/
+
+# Component data (preserved by zylos upgrade)
+media/
+data/
+*.jsonl

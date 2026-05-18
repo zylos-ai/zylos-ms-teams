@@ -28,7 +28,7 @@ After merge, create a GitHub Release with tag `vX.Y.Z` from the merge commit.
 This is a **communication component** for the Zylos agent ecosystem.
 
 - `src/index.js` — Main entry point (Express server with Teams SDK adapter)
-- `src/admin.js` — Admin CLI (config, groups, DM policy, group mode management)
+- `src/admin.js` — Admin CLI (config, groups, channels, DM policy management)
 - `src/lib/config.js` — Config loader with hot-reload, smart mode helpers
 - `src/lib/context.js` — JSONL persistence and cold-start replay for group context
 - `src/lib/conversation-store.js` — File-based conversation reference store
@@ -38,7 +38,10 @@ This is a **communication component** for the Zylos agent ecosystem.
 - `src/lib/graph.js` — Microsoft Graph API integration (chat/channel history)
 - `src/lib/auth.js` — JWT validation middleware for Bot Framework
 - `src/lib/attachments.js` — Inbound media download and resolution
+- `src/lib/channel-subscriptions.js` — Graph API subscription lifecycle for smart-mode channels
+- `src/lib/delegated-auth.js` — OAuth2 delegated token acquisition for Graph reactions
 - `src/lib/markdown-split.js` — Markdown-aware message splitting
 - `scripts/send.js` — C4 outbound message interface (splitting, reply-to, rate limit retry)
-- `hooks/` — Lifecycle hooks (post-install, pre-upgrade, post-upgrade)
+- `scripts/download-attachments.js` — On-demand attachment download for smart-mode conversations
+- `hooks/` — Lifecycle hooks (configure, post-install, pre-upgrade, post-upgrade)
 - `ecosystem.config.cjs` — PM2 service config (CommonJS required by PM2)

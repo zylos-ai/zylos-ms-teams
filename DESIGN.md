@@ -1,7 +1,7 @@
 # zylos-teams Design Document
 
-**Version**: v0.2.0
-**Date**: 2026-05-13
+**Version**: v1.2.0
+**Date**: 2026-05-18
 **Author**: Zylos Team
 **Repository**: https://github.com/zylos-ai/zylos-teams
 **Status**: Released
@@ -22,15 +22,21 @@ zylos-teams/
     index.js              — Express server, Bot Framework adapter, message routing
     admin.js              — CLI for config/ACL management
     lib/
-      config.js           — Config loader with hot-reload (fs.watch)
+      config.js           — Config loader with hot-reload (fs.watch), smart mode helpers
       auth.js             — JWT middleware for Bot Framework token validation
       html.js             — HTML-to-text conversion, reply blockquote extraction
       graph.js            — Microsoft Graph API client (chat history, file download)
       attachments.js      — Inbound media resolver (3-tier download strategy)
+      channel-subscriptions.js — Graph API subscription lifecycle for smart-mode channels
+      context.js          — JSONL persistence and cold-start replay for group context
       conversation-store.js — File-based conversation reference persistence
+      delegated-auth.js   — OAuth2 delegated token acquisition for Graph reactions
+      format.js           — Message formatting, endpoint building, XML escaping
+      markdown-split.js   — Markdown-aware message splitting
       message-dedup.js    — TTL-based message deduplication
   scripts/
     send.js               — C4 outbound message handler
+    download-attachments.js — On-demand attachment download for smart-mode conversations
   hooks/
     configure.js          — Install-time config collection (stdin JSON → config.json)
     post-install.js       — Post-install setup (dirs, default config, env check)
@@ -82,7 +88,8 @@ Located at `~/zylos/components/teams/config.json`:
   "groupPolicy": "allowlist",
   "owner": { "bound": true, "aadObjectId": "...", "name": "..." },
   "dmAllowFrom": [],
-  "groups": {}
+  "groups": {},
+  "channels": {}
 }
 ```
 
@@ -98,9 +105,11 @@ Located at `~/zylos/components/teams/config.json`:
 - Inbound: Teams webhook → Express → C4 `c4-receive.js`
 - Outbound: C4 `c4-send.js` → `scripts/send.js` → Bot Framework REST API
 
-### 4.3 HTTP Route
+### 4.3 HTTP Routes
 
-Caddy proxies `/teams/api/messages` → `localhost:3978/api/messages` (strip prefix `/teams`).
+Caddy proxies:
+- `/teams/api/messages` → `localhost:3978/api/messages` (Bot Framework webhook)
+- `/teams/api/notifications` → `localhost:3978/api/notifications` (Graph subscription webhook for smart-mode channels)
 
 ## 5. Security
 
@@ -120,6 +129,5 @@ Caddy proxies `/teams/api/messages` → `localhost:3978/api/messages` (strip pre
 ## 7. Future Improvements
 
 - Adaptive Card rendering for rich outbound messages
-- Typing indicator support
-- Reaction handling
-- Thread/reply-chain awareness
+- Thread/reply-chain awareness for multi-turn group conversations
+- Multi-tenant support (cross-organization)

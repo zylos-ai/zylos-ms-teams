@@ -104,10 +104,10 @@ Just tell your Zylos agent what you need:
 |------|---------|
 | Add user to DM allowlist | "Add user X to teams DM allowlist" |
 | Enable smart group | "Set this Teams group to smart mode" |
+| Add a channel | "Add the General channel to teams" |
 | Check status | "Show teams bot status" |
 | Restart bot | "Restart teams bot" |
 | Upgrade | "Upgrade teams component" |
-| Uninstall | "Uninstall teams component" |
 
 Or manage via admin CLI:
 
@@ -115,21 +115,32 @@ Or manage via admin CLI:
 ADM="node ~/zylos/.claude/skills/teams/src/admin.js"
 
 # General
-$ADM show                                    # Show full config
-$ADM show-owner                              # Show current owner
+$ADM show                                       # Show full config
+$ADM show-owner                                  # Show current owner
 
 # DM Access Control
-$ADM set-dm-policy <open|allowlist|owner>     # Set DM policy
-$ADM list-dm-allow                            # Show DM policy + allowFrom list
-$ADM add-dm-allow <aad_object_id>             # Add user to DM allowlist
-$ADM remove-dm-allow <aad_object_id>          # Remove user from DM allowlist
+$ADM set-dm-policy <open|allowlist|owner>         # Set DM policy
+$ADM list-dm-allow                                # Show DM policy + allowFrom list
+$ADM add-dm-allow <aad_object_id>                 # Add user to DM allowlist
+$ADM remove-dm-allow <aad_object_id>              # Remove user from DM allowlist
 
-# Group Management
-$ADM list-groups                              # List all configured groups
-$ADM add-group <conversation_id> <name>       # Add group
-$ADM remove-group <conversation_id>           # Remove a group
-$ADM set-group-policy <disabled|allowlist|open>
-$ADM set-group-mode <id> <mention|smart>      # Set group mode
+# Group Chat Management
+$ADM list-groups                                  # List all configured group chats
+$ADM add-group <conversation_id> <name>           # Add group chat
+$ADM remove-group <conversation_id>               # Remove a group chat
+$ADM set-group-policy <disabled|allowlist|open>    # Set group policy
+$ADM set-group-mode <conv_id> <mention|smart>      # Set group chat mode
+
+# Channel Management
+$ADM list-channels                                # List all configured channels
+$ADM add-channel <channelId> <teamId> <name>      # Add a channel
+$ADM remove-channel <channelId>                   # Remove a channel
+$ADM set-channel-mode <channelId> <mention|smart>  # Set channel mode
+
+# Delegated Auth (reactions)
+$ADM auth-status                                  # Show delegated auth users
+$ADM auth-url <base-url>                          # Generate sign-in URL
+$ADM auth-revoke <aad_object_id>                  # Revoke delegated auth
 ```
 
 ## Access Control
@@ -156,23 +167,24 @@ The first user to send a DM becomes the owner. The owner always bypasses all acc
 
 ## Smart Mode
 
-Groups can operate in two modes:
+Groups and channels can operate in two modes:
 
 - **mention** (default) — Bot only responds to @mentions
-- **smart** — Bot receives all messages; Claude decides whether to respond
+- **smart** — Bot receives all messages; agent decides whether to respond
+
+Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every 10 min) to receive messages without @mention. A 💬 reaction is set on incoming messages as a processing indicator and removed after the reply is sent.
 
 In smart mode without @mention:
-- Typing indicator is suppressed
-- Attachments are not downloaded (metadata-only note appended)
-- Claude sees the full conversation and can choose to skip
+- Attachments are fetched on-demand via `download-attachments.js`
+- Agent sees the full conversation and can choose to skip
 
-## Group Chat Behavior
+## Message Routing
 
 | Scenario | Bot Response |
 |----------|--------------|
-| Private DM (owner/allowlisted) | Responds via Claude |
-| Smart group message | Receives all messages, Claude decides |
-| @mention in allowed group | Responds with recent context |
+| Private DM (owner/allowlisted) | Responds via agent |
+| Smart group/channel message | Receives all messages, agent decides |
+| @mention in allowed group/channel | Responds with recent context |
 | Owner @mention in any group | Always responds |
 | Unknown user DM | Rejected with notice |
 

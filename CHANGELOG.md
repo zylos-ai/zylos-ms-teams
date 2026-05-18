@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-18
+
+### Added
+- Channel management: separate `channels` top-level config with independent mode (smart/mention) and allowFrom per channel
+- Channel smart mode via Microsoft Graph API subscriptions with webhook endpoint (`/api/notifications`) and auto-renewal every 10 min
+- On-demand attachment download script (`scripts/download-attachments.js`) for smart-mode conversations where webhook payloads omit attachments
+- Subscription cleanup: stale Graph subscriptions deleted when channel switches from smart to mention mode
+- Admin CLI: `list-channels`, `add-channel`, `remove-channel`, `set-channel-mode` commands
+- Delegated auth admin commands: `auth-status`, `auth-url`, `auth-revoke`
+- Emoji reaction (💬) on message receive for DM, group chat, and channel — removed after reply
+- Delegated auth flow for Graph API reactions (user-level token acquisition)
+- Reaction cache persistence (`reaction-cache.json`) across restarts
+- Standardized channel component test suite (`CHANNEL_TESTSUITE.md`, 47 tests)
+
+### Changed
+- Config restructured: channels separated from groups into own top-level section
+- Removed `teamOverrides` config key in favor of flat `channels` map
+- Admin CLI help reorganized into Group Chat / Channel / DM sections
+- `list-groups` now always shows mode (defaults to "mention" when field absent)
+- Typing indicator removed — 💬 reaction is now the sole processing indicator
+
+### Fixed
+- Group chat reaction bug: `resolveGraphChatId` was querying oneOnOne chats only; fixed to use `conversationId` directly for group chats
+- Channel attachment downloads in mention mode working for all file types (.pdf, .tex, images)
+
 ## [0.2.0] - 2026-05-17
 
 ### Added
