@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG = {
   dmAllowFrom: [],
   groupPolicy: 'allowlist',
   groups: {},
-  teamOverrides: {},
+  channels: {},
   message: {
     context_messages: 10
   }
@@ -35,7 +35,7 @@ export function mergeConfigWithDefaults(parsed = {}) {
       ...DEFAULT_CONFIG.owner,
       ...(parsed.owner || {})
     },
-    teamOverrides: parsed.teamOverrides || {},
+    channels: parsed.channels || {},
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})
@@ -44,62 +44,75 @@ export function mergeConfigWithDefaults(parsed = {}) {
 }
 
 /**
- * Resolve route-level configuration for an activity by walking:
- *   global defaults -> team override -> channel override
+ * Resolve route-level configuration for a conversation.
  *
- * Each level can set: requireMention, replyStyle, allowFrom
+ * For channels: config.channels[channelId] → posts[postId] (future)
+ * For groups:   config.groups[conversationId]
  *
- * @param {object} activity - The Teams activity
+ * @param {string} convType - 'channel' | 'group'
+ * @param {string} conversationId - Full conversation ID (may include ;messageid=)
  * @param {object} config - The loaded config
  * @returns {{ requireMention: boolean, replyStyle: string, allowFrom: string[] }}
  */
-export function resolveRouteConfig(activity, config) {
-  // Global defaults
+export function resolveRouteConfig(convType, conversationId, config) {
   const result = {
     requireMention: true,
     replyStyle: 'top-level',
     allowFrom: [],
   };
 
-  const teamId = activity.channelData?.team?.id
-    || activity.channelData?.teamsTeamId
-    || activity.team?.id
-    || '';
-  const conversationId = activity.conversation?.id || '';
-
-  // Apply group-level allowFrom from config.groups
   const baseConvId = conversationId.split(';')[0];
-  const groupConfig = (config.groups || {})[conversationId] || (config.groups || {})[baseConvId];
-  if (groupConfig && Array.isArray(groupConfig.allowFrom) && groupConfig.allowFrom.length > 0) {
-    result.allowFrom = groupConfig.allowFrom;
+
+  if (convType === 'channel') {
+    const channels = config.channels || {};
+    const chCfg = channels[conversationId] || channels[baseConvId];
+    if (!chCfg) return result;
+
+    if (chCfg.mode === 'smart') result.requireMention = false;
+    if (chCfg.replyStyle) result.replyStyle = chCfg.replyStyle;
+    if (Array.isArray(chCfg.allowFrom) && chCfg.allowFrom.length > 0) {
+      result.allowFrom = chCfg.allowFrom;
+    }
+
+    // Post-level overrides (future)
+    const threadMatch = conversationId.match(/;messageid=(\d+)/);
+    if (threadMatch) {
+      const postCfg = (chCfg.posts || {})[threadMatch[1]];
+      if (postCfg) {
+        if (postCfg.mode === 'smart') result.requireMention = false;
+        else if (postCfg.mode === 'mention') result.requireMention = true;
+        if (Array.isArray(postCfg.allowFrom) && postCfg.allowFrom.length > 0) {
+          result.allowFrom = postCfg.allowFrom;
+        }
+      }
+    }
+  } else {
+    const groups = config.groups || {};
+    const grpCfg = groups[conversationId] || groups[baseConvId];
+    if (grpCfg && Array.isArray(grpCfg.allowFrom) && grpCfg.allowFrom.length > 0) {
+      result.allowFrom = grpCfg.allowFrom;
+    }
   }
-
-  const teamOverrides = config.teamOverrides || {};
-  const teamConfig = teamOverrides[teamId];
-
-  if (!teamConfig) return result;
-
-  // Apply team-level overrides
-  if (teamConfig.requireMention !== undefined) result.requireMention = teamConfig.requireMention;
-  if (teamConfig.replyStyle !== undefined) result.replyStyle = teamConfig.replyStyle;
-  if (Array.isArray(teamConfig.allowFrom)) result.allowFrom = teamConfig.allowFrom;
-
-  // Apply channel-level overrides
-  const channels = teamConfig.channels || {};
-  const channelConfig = channels[conversationId];
-
-  if (!channelConfig) return result;
-
-  if (channelConfig.requireMention !== undefined) result.requireMention = channelConfig.requireMention;
-  if (channelConfig.replyStyle !== undefined) result.replyStyle = channelConfig.replyStyle;
-  if (Array.isArray(channelConfig.allowFrom)) result.allowFrom = channelConfig.allowFrom;
 
   return result;
 }
 
-export function isSmartGroup(config, conversationId) {
+export function isSmartConversation(config, convType, conversationId) {
+  const baseId = conversationId.split(';')[0];
+  if (convType === 'channel') {
+    const channels = config.channels || {};
+    const ch = channels[conversationId] || channels[baseId];
+    if (!ch) return false;
+    // Check post-level override first
+    const threadMatch = conversationId.match(/;messageid=(\d+)/);
+    if (threadMatch) {
+      const postCfg = (ch.posts || {})[threadMatch[1]];
+      if (postCfg?.mode) return postCfg.mode === 'smart';
+    }
+    return ch.mode === 'smart';
+  }
   const groups = config.groups || {};
-  const group = groups[conversationId] || groups[conversationId.split(';')[0]];
+  const group = groups[conversationId] || groups[baseId];
   return group?.mode === 'smart';
 }
 

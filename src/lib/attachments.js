@@ -494,6 +494,7 @@ export {
   normalizeServiceUrl, inferPlaceholder,
   isDownloadableAttachment, isHtmlAttachment, extractHtmlContent, extractHtmlAttachmentIds,
   resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
+  downloadGraphMedia,
 };
 
 async function downloadGraphNearbyFiles({ conversationType, conversationId, activity, tokenProvider }) {

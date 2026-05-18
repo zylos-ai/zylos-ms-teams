@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -18,7 +18,7 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { App, ExpressAdapter } from '@microsoft/teams.apps';
 
-import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig, isSmartGroup } from './lib/config.js';
+import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig, isSmartConversation } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
@@ -28,6 +28,7 @@ import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 import { ensureReplay, logEntry } from './lib/context.js';
 import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
+import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getActiveSubscriptions } from './lib/channel-subscriptions.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
@@ -59,22 +60,11 @@ console.log(`[teams] Data directory: ${DATA_DIR}`);
 
 const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
 let VOICE_ENABLED = false;
-if (!fs.existsSync(TRANSCRIBE_SCRIPT)) {
-  console.log('[teams] Voice ASR not available (~/zylos/bin/transcribe not found)');
-} else {
-  try {
-    const featuresFile = path.join(process.env.HOME, 'zylos/.features.json');
-    if (fs.existsSync(featuresFile)) {
-      const features = JSON.parse(fs.readFileSync(featuresFile, 'utf8'));
-      VOICE_ENABLED = !!features?.features?.voiceAsr;
-    } else {
-      VOICE_ENABLED = true;
-    }
-  } catch {
-    VOICE_ENABLED = true;
-  }
-  console.log(`[teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (not included in current plan)'}`);
-}
+try {
+  execFileSync(TRANSCRIBE_SCRIPT, ['--check'], { timeout: 15000 });
+  VOICE_ENABLED = true;
+} catch {}
+console.log(`[teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (whisper or transcribe.py not found)'}`);
 
 function transcribeAudio(audioPath) {
   return new Promise((resolve, reject) => {
@@ -161,12 +151,19 @@ if (!config.enabled) {
   process.exit(0);
 }
 
-watchConfig((newConfig) => {
+watchConfig(async (newConfig) => {
   console.log('[teams] Config reloaded');
   config = newConfig;
   if (!newConfig.enabled) {
     console.log('[teams] Component disabled, stopping...');
     shutdown();
+    return;
+  }
+  // Re-sync channel subscriptions when config changes
+  try {
+    await initChannelSubscriptions();
+  } catch (err) {
+    console.warn(`[teams/subs] Re-sync on config reload failed: ${err.message}`);
   }
 });
 
@@ -252,17 +249,27 @@ function stripThreadId(conversationId) {
   return conversationId.split(';')[0];
 }
 
-function isGroupAllowed(conversationId) {
+function isConversationAllowed(convType, conversationId) {
   const groupPolicy = config.groupPolicy || 'allowlist';
   if (groupPolicy === 'disabled') return false;
   if (groupPolicy === 'open') return true;
+  const baseId = stripThreadId(conversationId);
+  if (convType === 'channel') {
+    const channels = config.channels || {};
+    return !!channels[conversationId] || !!channels[baseId];
+  }
   const groups = config.groups || {};
-  return !!groups[conversationId] || !!groups[stripThreadId(conversationId)];
+  return !!groups[conversationId] || !!groups[baseId];
 }
 
-function getGroupName(conversationId) {
+function getConversationName(convType, conversationId) {
+  const baseId = stripThreadId(conversationId);
+  if (convType === 'channel') {
+    const channels = config.channels || {};
+    return channels[conversationId]?.name || channels[baseId]?.name || conversationId;
+  }
   const groups = config.groups || {};
-  return groups[conversationId]?.name || groups[stripThreadId(conversationId)]?.name || conversationId;
+  return groups[conversationId]?.name || groups[baseId]?.name || conversationId;
 }
 
 
@@ -473,11 +480,6 @@ async function handleMessage(ctx) {
       return;
     }
 
-    // Send typing indicator for DMs (after access check)
-    try {
-      await teamsApp.send(activity.conversation?.id, { type: 'typing' });
-    } catch {}
-
     // Auto-react on receipt (delegated auth, fire-and-forget)
     {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
@@ -524,8 +526,8 @@ async function handleMessage(ctx) {
     const senderIsOwner = isOwner(senderAadObjectId);
     const groupPolicy = config.groupPolicy || 'allowlist';
     const mentioned = isBotMentioned(activity);
-    const routeConfig = resolveRouteConfig(activity, config);
-    const smart = isSmartGroup(config, conversationId);
+    const routeConfig = resolveRouteConfig(convType, conversationId, config);
+    const smart = isSmartConversation(config, convType, conversationId);
     const smartNoMention = smart && !mentioned;
 
     if (groupPolicy === 'disabled') {
@@ -533,7 +535,7 @@ async function handleMessage(ctx) {
       return;
     }
 
-    const allowedGroup = isGroupAllowed(conversationId);
+    const allowedGroup = isConversationAllowed(convType, conversationId);
 
     if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
       if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
@@ -561,13 +563,6 @@ async function handleMessage(ctx) {
 
     if (!mentioned && senderIsOwner && !allowedGroup) {
       // Owner in non-allowed group without mention: process as owner override
-    }
-
-    // Typing indicator only when directly addressed
-    if (!smartNoMention) {
-      try {
-        await teamsApp.send(activity.conversation?.id, { type: 'typing' });
-      } catch {}
     }
 
     // Auto-react on receipt (delegated auth, fire-and-forget)
@@ -603,11 +598,13 @@ async function handleMessage(ctx) {
     if (botMentionEntity?.mentioned?.name && cleanText.startsWith(botMentionEntity.mentioned.name)) {
       cleanText = cleanText.slice(botMentionEntity.mentioned.name.length).trim();
     }
-    const groupName = getGroupName(conversationId);
+    const groupName = getConversationName(convType, conversationId);
 
     // Build group context from in-memory history + optional Graph API fetch
-    const contextLimit = config.groups?.[conversationId]?.historyLimit
-      || config.message?.context_messages || 10;
+    const convConfig = convType === 'channel'
+      ? (config.channels?.[conversationId] || config.channels?.[stripThreadId(conversationId)])
+      : (config.groups?.[conversationId] || config.groups?.[stripThreadId(conversationId)]);
+    const contextLimit = convConfig?.historyLimit || config.message?.context_messages || 10;
     ensureReplay(conversationId, recordHistoryEntry, contextLimit);
     let contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
 
@@ -689,8 +686,23 @@ async function handleMessage(ctx) {
     let msg = formatMessage(convType, senderName, cleanText, {
       groupName, quotedReply, contextBlock, smartHint: smartNoMention && !hasVoiceAttachment,
     });
-    if (smartNoMention && hasAttachments && !hasVoiceAttachment) {
-      msg += ' [attachments not downloaded — smart mode, no @mention]';
+    if (smartNoMention && !hasVoiceAttachment) {
+      if (hasAttachments) {
+        const attNames = nonHtmlAtts.map(a => a.name || a.contentType || 'file').join(', ');
+        msg += ` [attachments: ${attNames}]`;
+      }
+      let dlCmd;
+      if (convType === 'channel') {
+        const cd = activity.channelData || {};
+        const tid = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
+        const chid = cd.teamsChannelId || cd.channel?.id || cd.channelId || '';
+        dlCmd = activity.replyToId
+          ? `channel ${tid} ${chid} ${activityId} ${activity.replyToId}`
+          : `channel ${tid} ${chid} ${activityId}`;
+      } else {
+        dlCmd = `chat ${conversationId} ${activityId}`;
+      }
+      msg += ` ---- download: node ~/zylos/.claude/skills/teams/scripts/download-attachments.js ${dlCmd}`;
     }
     for (const media of mediaFiles) {
       if (media.contentType?.startsWith('audio/') || media.contentType?.startsWith('video/')) continue;
@@ -729,26 +741,50 @@ teamsApp.on('conversationUpdate', async (ctx) => {
       console.log(`[teams] Bot added to conversation: ${conversationId}`);
       saveConvRef(activity, ctx.ref);
 
-      // Auto-add handling for group chats
+      // Auto-add handling for group chats and channels
       if (convType === 'group' || convType === 'channel') {
         const adderAadId = activity.from?.aadObjectId || '';
         const adderName = activity.from?.name || 'unknown';
 
         if (isOwner(adderAadId)) {
-          // Owner added bot → auto-approve group
-          if (!config.groups) config.groups = {};
-          if (!config.groups[conversationId]) {
-            const chatTitle = activity.conversation?.name || 'group';
-            config.groups[conversationId] = {
-              name: chatTitle,
-              allowFrom: [],
-              added_at: new Date().toISOString(),
-            };
-            saveConfig(config);
-            console.log(`[teams] Auto-approved group: ${chatTitle} (added by owner)`);
-            try {
-              await ctx.send(`Group added. Members can @mention me to chat.`);
-            } catch {}
+          if (convType === 'channel') {
+            // Channel auto-add: store in config.channels
+            if (!config.channels) config.channels = {};
+            const baseChId = stripThreadId(conversationId);
+            if (!config.channels[baseChId]) {
+              const cd = activity.channelData || {};
+              const teamId = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
+              const chatTitle = activity.conversation?.name || cd.channel?.name || 'channel';
+              config.channels[baseChId] = {
+                name: chatTitle,
+                teamId,
+                mode: 'mention',
+                allowFrom: [],
+                posts: {},
+                added_at: new Date().toISOString(),
+              };
+              saveConfig(config);
+              console.log(`[teams] Auto-approved channel: ${chatTitle} (added by owner)`);
+              try {
+                await ctx.send(`Channel added. Members can @mention me to chat.`);
+              } catch {}
+            }
+          } else {
+            // Group chat auto-add
+            if (!config.groups) config.groups = {};
+            if (!config.groups[conversationId]) {
+              const chatTitle = activity.conversation?.name || 'group';
+              config.groups[conversationId] = {
+                name: chatTitle,
+                allowFrom: [],
+                added_at: new Date().toISOString(),
+              };
+              saveConfig(config);
+              console.log(`[teams] Auto-approved group: ${chatTitle} (added by owner)`);
+              try {
+                await ctx.send(`Group added. Members can @mention me to chat.`);
+              } catch {}
+            }
           }
         } else {
           // Non-owner added bot → pending approval, notify owner
@@ -1016,6 +1052,154 @@ expressApp.post('/internal/react', async (req, res) => {
   }
 });
 
+// ── Graph Change Notifications (channel smart mode) ──
+
+expressApp.use('/api/notifications', express.json());
+expressApp.post('/api/notifications', async (req, res) => {
+  // Subscription validation handshake
+  if (req.query.validationToken) {
+    console.log('[teams/subs] Validation handshake received');
+    res.set('Content-Type', 'text/plain');
+    return res.status(200).send(req.query.validationToken);
+  }
+
+  res.status(202).send();
+
+  const notifications = req.body?.value || [];
+  for (const notification of notifications) {
+    try {
+      await handleChannelNotification(notification);
+    } catch (err) {
+      console.error(`[teams/subs] Notification error: ${err.message}`);
+    }
+  }
+});
+
+async function handleChannelNotification(notification) {
+  const resource = notification.resource || '';
+  // resource: teams('teamId')/channels('channelId')/messages('msgId') or .../replies('replyId')
+  const teamMatch = resource.match(/teams\('([^']+)'\)/);
+  const channelMatch = resource.match(/channels\('([^']+)'\)/);
+  const msgMatch = resource.match(/messages\('([^']+)'\)/);
+  const replyMatch = resource.match(/replies\('([^']+)'\)/);
+
+  if (!teamMatch || !channelMatch) {
+    console.debug(`[teams/subs] Skipping notification with unrecognized resource: ${resource}`);
+    return;
+  }
+
+  const teamId = teamMatch[1];
+  const channelId = channelMatch[1];
+  const messageId = replyMatch?.[1] || msgMatch?.[1];
+  if (!messageId) return;
+
+  const rootMessageId = replyMatch ? msgMatch?.[1] : null;
+
+  // Fetch the full message via Graph
+  let graphMsg;
+  try {
+    if (rootMessageId) {
+      graphMsg = await fetchReplyMessage(teamId, channelId, rootMessageId, messageId);
+    } else {
+      graphMsg = await fetchMessage(teamId, channelId, messageId);
+    }
+  } catch (err) {
+    console.warn(`[teams/subs] Failed to fetch message ${messageId}: ${err.message}`);
+    return;
+  }
+
+  // Skip bot's own messages
+  if (graphMsg.from?.application?.id === credentials.appId) return;
+
+  // Skip system/event messages
+  if (graphMsg.messageType && graphMsg.messageType !== 'message') return;
+
+  // Skip if channel is no longer in smart mode (stale subscription)
+  if (!isSmartConversation(config, 'channel', channelId)) return;
+
+  const senderName = graphMsg.from?.user?.displayName || 'unknown';
+  const senderAadId = graphMsg.from?.user?.id || '';
+  const text = graphMsg.body?.contentType === 'text'
+    ? graphMsg.body.content || ''
+    : htmlToText(graphMsg.body?.content || '');
+
+  const graphAttachments = (graphMsg.attachments || []).filter(a =>
+    a.contentType !== 'messageReference'
+  );
+  const hasAttachments = graphAttachments.length > 0;
+
+  if (!text.trim() && !hasAttachments) return;
+
+  // Dedup: skip if this message was already processed via @mention delivery
+  if (isDuplicate(`graph-${messageId}`)) return;
+
+  // Check if bot is @mentioned — if so, the normal Bot Framework path handles it
+  const mentions = graphMsg.mentions || [];
+  const botMentioned = mentions.some(m =>
+    m.mentioned?.application?.id === credentials.appId
+  );
+  if (botMentioned) return;
+
+  // Access control
+  const senderIsOwner = isOwner(senderAadId);
+  const conversationId = channelId;
+
+  if (!isConversationAllowed('channel', conversationId) && !senderIsOwner) return;
+
+  const routeConfig = resolveRouteConfig('channel', conversationId, config);
+  if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
+    if (!routeConfig.allowFrom.includes(senderAadId)) return;
+  }
+
+  // Record in history
+  const threadConversationId = rootMessageId
+    ? `${channelId};messageid=${rootMessageId}`
+    : channelId;
+
+  recordHistoryEntry(threadConversationId, {
+    timestamp: graphMsg.createdDateTime || new Date().toISOString(),
+    message_id: messageId,
+    user_id: senderAadId,
+    user_name: senderName,
+    text,
+  });
+
+  const channelName = getConversationName('channel', conversationId);
+
+  // Build context
+  const contextLimit = config.channels?.[conversationId]?.historyLimit
+    || config.message?.context_messages || 10;
+  ensureReplay(threadConversationId, recordHistoryEntry, contextLimit);
+  const contextMessages = getInMemoryContext(threadConversationId, messageId, contextLimit);
+  const contextBlock = formatContextBlock(contextMessages);
+
+  // Build message with smart hint
+  let msg = formatMessage('channel', senderName, text, {
+    groupName: channelName,
+    contextBlock,
+    smartHint: true,
+  });
+
+  // Build endpoint for reply
+  const endpoint = buildEndpoint(threadConversationId, {
+    type: 'channel',
+    aadObjectId: senderAadId,
+    activityId: messageId,
+  });
+
+  if (hasAttachments) {
+    const attNames = graphAttachments.map(a => a.name || a.contentType || 'file').join(', ');
+    msg += ` [attachments: ${attNames}]`;
+  }
+  const dlArgs = rootMessageId
+    ? `channel ${teamId} ${channelId} ${messageId} ${rootMessageId}`
+    : `channel ${teamId} ${channelId} ${messageId}`;
+  msg += ` ---- download: node ~/zylos/.claude/skills/teams/scripts/download-attachments.js ${dlArgs}`;
+
+  console.log(`[teams/subs] Smart channel message from ${senderName}: ${text.substring(0, 50)}${hasAttachments ? ` (${graphAttachments.length} attachment(s))` : ''}...`);
+  sendToC4('teams', endpoint, msg);
+}
+
 // ── Lifecycle ──
 
 let isShuttingDown = false;
@@ -1025,6 +1209,7 @@ function shutdown() {
   isShuttingDown = true;
   console.log('[teams] Shutting down...');
   clearInterval(dedupCleanupInterval);
+  stopRenewalLoop();
   stopWatching();
 
   const finishExit = () => process.exit(0);
@@ -1071,6 +1256,50 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
   throw new Error(`Failed to bind port ${port} after ${maxRetries} attempts`);
 }
 
+async function getPublicUrl() {
+  if (process.env.MSTEAMS_PUBLIC_URL) return process.env.MSTEAMS_PUBLIC_URL;
+  try {
+    const res = await fetch('http://127.0.0.1:4040/api/tunnels');
+    const data = await res.json();
+    const tunnel = data.tunnels?.find(t => t.proto === 'https');
+    if (tunnel) return tunnel.public_url;
+  } catch {}
+  return null;
+}
+
+async function initChannelSubscriptions() {
+  if (!isGraphEnabled()) return;
+
+  const channels = config.channels || {};
+  const hasSmartChannels = Object.values(channels).some(c => c.mode === 'smart');
+
+  if (!hasSmartChannels) {
+    // Clean up any stale subscriptions when no smart channels
+    try {
+      await syncSubscriptions({}, '');
+      stopRenewalLoop();
+    } catch {}
+    return;
+  }
+
+  const publicUrl = await getPublicUrl();
+  if (!publicUrl) {
+    console.warn('[teams/subs] No public URL found (set MSTEAMS_PUBLIC_URL or run ngrok). Channel subscriptions disabled.');
+    return;
+  }
+
+  const notificationUrl = `${publicUrl.replace(/\/$/, '')}/api/notifications`;
+  console.log(`[teams/subs] Notification URL: ${notificationUrl}`);
+
+  try {
+    await syncSubscriptions(channels, notificationUrl);
+    startRenewalLoop();
+    console.log(`[teams/subs] Channel subscriptions active`);
+  } catch (err) {
+    console.error(`[teams/subs] Failed to initialize subscriptions: ${err.message}`);
+  }
+}
+
 (async () => {
   await startServerWithRetry(PORT);
   httpServer.on('error', (err) => {
@@ -1080,6 +1309,8 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
   console.log(`[teams] Bot identity: ${botName} (${botId || 'no app ID'})`);
   console.log(`[teams] Credentials: ${credentials.appId ? 'configured' : 'MISSING'}`);
   console.log(`[teams] DM policy: ${config.dmPolicy || 'owner'}, Group policy: ${config.groupPolicy || 'allowlist'}`);
+
+  await initChannelSubscriptions();
 })().catch((err) => {
   console.error(`[teams] Fatal startup error: ${err.message}`);
   process.exit(1);

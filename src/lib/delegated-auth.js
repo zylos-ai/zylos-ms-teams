@@ -228,8 +228,13 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   } else {
-    const graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
-    if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    let graphChatId;
+    if (conversationType === 'group') {
+      graphChatId = conversationId;
+    } else {
+      graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+      if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    }
     url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   }
 
@@ -261,8 +266,13 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
   } else {
-    const graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
-    if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    let graphChatId;
+    if (conversationType === 'group') {
+      graphChatId = conversationId;
+    } else {
+      graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+      if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    }
     url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
   }
 

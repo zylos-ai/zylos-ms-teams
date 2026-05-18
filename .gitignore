@@ -27,6 +27,3 @@ build/
 # Temporary files
 *.tmp
 *.bak
-
-# Runtime data
-.zylos/
