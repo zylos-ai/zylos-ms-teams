@@ -423,6 +423,7 @@ const command = args[0] || 'help';
 
 if (commands[command]) {
   commands[command](...args.slice(1));
+  process.exit(0);
 } else {
   console.error(`Unknown command: ${command}`);
   commands.help();

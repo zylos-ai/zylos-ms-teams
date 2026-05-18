@@ -353,7 +353,12 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
       const msgRes = await fetch(messageUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (!msgRes.ok) continue;
+      console.debug(`[teams/attachments] Graph fetch ${messageUrl} → ${msgRes.status}`);
+      if (!msgRes.ok) {
+        const errBody = await msgRes.text().catch(() => '');
+        console.debug(`[teams/attachments] Graph error body: ${errBody.substring(0, 300)}`);
+        continue;
+      }
       msgData = await msgRes.json();
     } catch (err) {
       console.warn(`[teams/attachments] Graph message fetch failed: ${err.message}`);
@@ -361,6 +366,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
     }
 
     const attachments = Array.isArray(msgData.attachments) ? msgData.attachments : [];
+    console.debug(`[teams/attachments] Graph message attachments: ${JSON.stringify(attachments.map(a => ({ id: a.id, contentType: a.contentType, name: a.name, contentUrl: (a.contentUrl || '').substring(0, 100) })))}`);
 
     // Download SharePoint "reference" attachments via /shares/ endpoint
     for (const att of attachments) {
@@ -454,17 +460,20 @@ function buildGraphMessageUrls({ conversationType, conversationId, activity }) {
   if (cdMsgId) candidates.add(String(cdMsgId).trim());
 
   if (conversationType === 'channel') {
-    const teamId = channelData?.team?.id || channelData?.teamId;
-    const channelId = channelData?.channel?.id || channelData?.channelId || channelData?.teamsChannelId;
+    const teamId = channelData?.team?.aadGroupId || channelData?.team?.id || channelData?.teamId;
+    const channelId = channelData?.teamsChannelId || channelData?.channel?.id || channelData?.channelId;
     if (!teamId || !channelId) return [];
+    // Extract thread root from conversationId (;messageid=XXXX) as fallback for replyToId
+    const threadMatch = (conversationId || '').match(/;messageid=(\d+)/);
+    const threadRootId = replyToId || (threadMatch ? threadMatch[1] : '');
     const urls = [];
-    if (replyToId) {
+    if (threadRootId) {
       for (const c of candidates) {
-        if (c === replyToId) continue;
-        urls.push(`${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(replyToId)}/replies/${encodeURIComponent(c)}`);
+        if (c === threadRootId) continue;
+        urls.push(`${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies/${encodeURIComponent(c)}`);
       }
     }
-    if (candidates.size === 0 && replyToId) candidates.add(replyToId);
+    if (candidates.size === 0 && threadRootId) candidates.add(threadRootId);
     for (const c of candidates)
       urls.push(`${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(c)}`);
     return [...new Set(urls)];
@@ -497,10 +506,14 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
   let url;
   if (conversationType === 'channel') {
     const channelData = activity.channelData || {};
-    const teamId = channelData.team?.id || channelData.teamId;
-    const channelId = channelData.channel?.id || channelData.channelId || channelData.teamsChannelId;
+    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
+    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
     if (!teamId || !channelId) return [];
-    url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=5&$orderby=createdDateTime desc`;
+    const threadMatch = (activity.conversation?.id || '').match(/;messageid=(\d+)/);
+    const threadRootId = threadMatch ? threadMatch[1] : '';
+    url = threadRootId
+      ? `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies?$top=5&$orderby=createdDateTime desc`
+      : `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=5&$orderby=createdDateTime desc`;
   } else {
     const chatId = (conversationId || '').trim();
     if (!chatId) return [];
@@ -551,12 +564,14 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
   return out;
 }
 
-export async function resolveInboundMedia({ attachments, conversationType, conversationId, serviceUrl, activity }) {
+export async function resolveInboundMedia({ attachments, conversationType, conversationId, serviceUrl, activity, delegatedToken }) {
   if (!Array.isArray(attachments) || attachments.length === 0) return [];
 
-  const tokenProvider = isGraphEnabled()
-    ? (scope) => acquireTokenForScope(scope)
-    : null;
+  const tokenProvider = delegatedToken
+    ? (_scope) => Promise.resolve(delegatedToken)
+    : isGraphEnabled()
+      ? (scope) => acquireTokenForScope(scope)
+      : null;
 
   // Tier 1: direct download from activity attachments
   let media = await downloadAttachments(attachments, tokenProvider);
@@ -593,8 +608,10 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
   // Tier 3: Graph API (for group/channel, or when BF fails)
   if (!isBotFrameworkPersonalChatId(conversationId) && tokenProvider) {
     const messageUrls = buildGraphMessageUrls({ conversationType, conversationId, activity });
+    console.debug(`[teams/attachments] Tier 3: messageUrls=${JSON.stringify(messageUrls)}`);
     if (messageUrls.length > 0) {
       media = await downloadGraphMedia({ messageUrls, tokenProvider });
+      console.debug(`[teams/attachments] Tier 3: downloadGraphMedia returned ${media.length} file(s)`);
       if (media.length > 0) {
         console.log(`[teams/attachments] Tier 3 (Graph): downloaded ${media.length} file(s)`);
         return media;
@@ -607,6 +624,8 @@ export async function resolveInboundMedia({ attachments, conversationType, conve
       console.log(`[teams/attachments] Tier 3b (Graph nearby): downloaded ${media.length} file(s)`);
       return media;
     }
+  } else {
+    console.debug(`[teams/attachments] Tier 3 skipped: isBF=${isBotFrameworkPersonalChatId(conversationId)}, hasToken=${!!tokenProvider}`);
   }
 
   return [];

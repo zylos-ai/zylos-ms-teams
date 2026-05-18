@@ -9,7 +9,7 @@ const _replayedKeys = new Set();
 fs.mkdirSync(LOGS_DIR, { recursive: true });
 
 function chatIdToLogFile(chatId) {
-  return String(chatId).replace(/[/:@]/g, '_') + '.jsonl';
+  return String(chatId).split(';')[0].replace(/[/:@]/g, '_') + '.jsonl';
 }
 
 export function logEntry(chatId, entry) {

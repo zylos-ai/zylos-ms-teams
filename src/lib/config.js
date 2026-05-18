@@ -68,7 +68,8 @@ export function resolveRouteConfig(activity, config) {
   const conversationId = activity.conversation?.id || '';
 
   // Apply group-level allowFrom from config.groups
-  const groupConfig = (config.groups || {})[conversationId];
+  const baseConvId = conversationId.split(';')[0];
+  const groupConfig = (config.groups || {})[conversationId] || (config.groups || {})[baseConvId];
   if (groupConfig && Array.isArray(groupConfig.allowFrom) && groupConfig.allowFrom.length > 0) {
     result.allowFrom = groupConfig.allowFrom;
   }
@@ -98,7 +99,7 @@ export function resolveRouteConfig(activity, config) {
 
 export function isSmartGroup(config, conversationId) {
   const groups = config.groups || {};
-  const group = groups[conversationId];
+  const group = groups[conversationId] || groups[conversationId.split(';')[0]];
   return group?.mode === 'smart';
 }
 

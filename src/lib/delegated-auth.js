@@ -6,7 +6,7 @@ import { getCredentials, DATA_DIR } from './config.js';
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
 const AUTH_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize';
 const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
-const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send offline_access';
+const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send ChannelMessage.Read.All Files.Read.All offline_access';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 let tokens = {};
@@ -179,6 +179,40 @@ export function revokeAuth(aadObjectId) {
   return true;
 }
 
+// ── Graph Chat ID Resolution ──
+
+const chatIdCache = new Map();
+
+async function resolveGraphChatId(aadObjectId, conversationId) {
+  if (chatIdCache.has(conversationId)) return chatIdCache.get(conversationId);
+
+  const token = await getDelegatedToken(aadObjectId);
+  if (!token) return null;
+
+  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=chatType eq 'oneOnOne'&$top=10&$select=id,topic,chatType`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.warn(`[teams/delegated-auth] Failed to list chats (${res.status}): ${errText}`);
+    return null;
+  }
+
+  const data = await res.json();
+  console.debug(`[teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats`);
+  if (data.value?.length) {
+    console.debug(`[teams/delegated-auth] First chat ID: ${data.value[0].id}`);
+  }
+
+  // Use the most recently active oneOnOne chat (caller invokes this right after receiving a message)
+  const chat = data.value?.[0];
+  if (chat) {
+    chatIdCache.set(conversationId, chat.id);
+    return chat.id;
+  }
+  return null;
+}
+
 // ── Reaction API ──
 
 export async function sendReaction({ aadObjectId, conversationType, conversationId, messageId, reactionType, activity }) {
@@ -188,12 +222,15 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
   let url;
   if (conversationType === 'channel') {
     const channelData = activity?.channelData || {};
-    const teamId = channelData.team?.id || channelData.teamId;
-    const channelId = channelData.channel?.id || channelData.channelId || channelData.teamsChannelId;
+    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
+    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
+    console.debug(`[teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   } else {
-    url = `${GRAPH_BASE}/chats/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
+    const graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+    if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   }
 
   const res = await fetch(url, {
@@ -219,12 +256,14 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
   let url;
   if (conversationType === 'channel') {
     const channelData = activity?.channelData || {};
-    const teamId = channelData.team?.id || channelData.teamId;
-    const channelId = channelData.channel?.id || channelData.channelId || channelData.teamsChannelId;
+    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
+    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
   } else {
-    url = `${GRAPH_BASE}/chats/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
+    const graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+    if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
+    url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
   }
 
   const res = await fetch(url, {

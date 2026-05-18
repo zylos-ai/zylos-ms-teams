@@ -117,17 +117,36 @@ export async function fetchChatHistory(conversationId, count = 10) {
 /**
  * Fetch recent messages from a Teams channel.
  */
-export async function fetchChannelHistory(teamId, channelId, count = 10) {
+export async function fetchChannelHistory(teamId, channelId, count = 10, threadMessageId = '', delegatedToken = '') {
   if (!isGraphEnabled()) return [];
 
   const encodedTeam = encodeURIComponent(teamId);
   const encodedChannel = encodeURIComponent(channelId);
 
-  const data = await graphRequest(
-    `/teams/${encodedTeam}/channels/${encodedChannel}/messages?$top=${count}`
-  );
+  let urlPath;
+  if (threadMessageId) {
+    urlPath = `/teams/${encodedTeam}/channels/${encodedChannel}/messages/${encodeURIComponent(threadMessageId)}/replies?$top=${count}`;
+  } else {
+    urlPath = `/teams/${encodedTeam}/channels/${encodedChannel}/messages?$top=${count}`;
+  }
+
+  let data;
+  if (delegatedToken) {
+    const url = `${GRAPH_BASE}${urlPath}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${delegatedToken}`, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Graph API error (${res.status}): ${text}`);
+    }
+    data = await res.json();
+  } else {
+    data = await graphRequest(urlPath);
+  }
 
   const messages = (data.value || []).reverse();
+  console.debug(`[teams/graph] fetchChannelHistory: path=${urlPath}, token=${delegatedToken ? 'delegated' : 'app'}, returned ${messages.length} messages`);
   return messages.map(formatGraphMessage);
 }
 
@@ -139,9 +158,10 @@ function formatGraphMessage(msg) {
     ? stripBasicHtml(msg.body.content || '')
     : (msg.body?.content || '');
   const time = msg.createdDateTime || '';
+  const id = msg.id || '';
   const attachments = (msg.attachments || []).map(a => a.name || a.contentType).filter(Boolean);
 
-  return { from, body, time, attachments };
+  return { from, body, time, id, attachments };
 }
 
 function stripBasicHtml(html) {

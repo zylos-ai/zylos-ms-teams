@@ -265,6 +265,27 @@ async function sendText(text) {
   }
 }
 
+async function removeThinkingReaction() {
+  const triggerMsgId = parsedEndpoint.msg;
+  if (!triggerMsgId) return;
+  const internalToken = readInternalToken();
+  if (!internalToken) return;
+  const port = config.port || 3978;
+  try {
+    await fetch(`http://127.0.0.1:${port}/internal/react`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Token': internalToken },
+      body: JSON.stringify({
+        conversationId: parsedEndpoint.conversationId,
+        messageId: triggerMsgId,
+        reactionType: '💬',
+        conversationType: parsedEndpoint.type || 'dm',
+        action: 'remove',
+      }),
+    });
+  } catch {}
+}
+
 async function send() {
   try {
     const media = parseMediaPrefix(message);
@@ -273,6 +294,7 @@ async function send() {
     } else {
       await sendText(message);
     }
+    await removeThinkingReaction();
     console.log('Message sent successfully');
     process.exit(0);
   } catch (err) {

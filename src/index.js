@@ -23,14 +23,29 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext } from './lib/graph.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, acquireTokenForScope } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
-import { ensureReplay } from './lib/context.js';
-import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
+import { ensureReplay, logEntry } from './lib/context.js';
+import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
 
 const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
+const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
+const reactionContextCache = new Map();
+
+// Load persisted reaction context on startup
+try {
+  const cached = JSON.parse(fs.readFileSync(REACTION_CACHE_FILE, 'utf8'));
+  for (const [k, v] of Object.entries(cached)) reactionContextCache.set(k, v);
+} catch {}
+
+function persistReactionCache() {
+  try {
+    const obj = Object.fromEntries(reactionContextCache);
+    fs.writeFileSync(REACTION_CACHE_FILE, JSON.stringify(obj), 'utf8');
+  } catch {}
+}
 const TOKEN_FILE = path.join(DATA_DIR, '.internal-token');
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -90,21 +105,26 @@ const dedupCleanupInterval = setInterval(() => {
 const chatHistories = new Map();
 
 function recordHistoryEntry(chatId, entry) {
-  const key = String(chatId);
+  const key = String(chatId).split(';')[0];
   if (!chatHistories.has(key)) chatHistories.set(key, []);
   const history = chatHistories.get(key);
 
   if (entry.message_id && history.some(h => h.message_id === entry.message_id)) return;
 
-  // Content-based dedup (same user + same text within 5s window)
-  const recentDup = history.find(h =>
-    h.user_id === entry.user_id &&
-    h.text === entry.text &&
-    Math.abs(new Date(h.timestamp).getTime() - new Date(entry.timestamp).getTime()) < 5000
+  // Content-based dedup: normalize text (strip markdown) and compare within 10s window
+  const normalize = t => (t || '').replace(/[*_`#\->\[\]()!]/g, '').replace(/\s+/g, ' ').trim().substring(0, 120);
+  const entryNorm = normalize(entry.text);
+  const entryTime = new Date(entry.timestamp).getTime();
+  const recentDup = entryNorm && history.find(h =>
+    normalize(h.text) === entryNorm &&
+    Math.abs(new Date(h.timestamp).getTime() - entryTime) < 10000
   );
   if (recentDup) return;
 
   history.push(entry);
+  if (!String(entry.message_id || '').startsWith('graph-')) {
+    logEntry(chatId, entry);
+  }
 
   const maxEntries = (config?.message?.context_messages || 10) * 2;
   if (history.length > maxEntries) {
@@ -113,7 +133,7 @@ function recordHistoryEntry(chatId, entry) {
 }
 
 function getInMemoryContext(chatId, currentMessageId, limit) {
-  const key = String(chatId);
+  const key = String(chatId).split(';')[0];
   const history = chatHistories.get(key);
   if (!history || history.length === 0) return [];
 
@@ -228,17 +248,21 @@ function isDmAllowed(aadObjectId) {
 }
 
 // Group access check
+function stripThreadId(conversationId) {
+  return conversationId.split(';')[0];
+}
+
 function isGroupAllowed(conversationId) {
   const groupPolicy = config.groupPolicy || 'allowlist';
   if (groupPolicy === 'disabled') return false;
   if (groupPolicy === 'open') return true;
   const groups = config.groups || {};
-  return !!groups[conversationId];
+  return !!groups[conversationId] || !!groups[stripThreadId(conversationId)];
 }
 
 function getGroupName(conversationId) {
   const groups = config.groups || {};
-  return groups[conversationId]?.name || conversationId;
+  return groups[conversationId]?.name || groups[stripThreadId(conversationId)]?.name || conversationId;
 }
 
 
@@ -409,12 +433,18 @@ async function handleMessage(ctx) {
   });
 
   async function downloadMedia() {
+    let dlgToken;
+    if (convType === 'channel') {
+      const authUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
+      if (authUser) try { dlgToken = await getDelegatedToken(authUser); } catch {}
+    }
     return resolveInboundMedia({
       attachments: activity.attachments,
       conversationType: convType,
       conversationId,
       serviceUrl: activity.serviceUrl,
       activity,
+      delegatedToken: dlgToken || undefined,
     });
   }
 
@@ -449,15 +479,18 @@ async function handleMessage(ctx) {
     } catch {}
 
     // Auto-react on receipt (delegated auth, fire-and-forget)
-    if (hasAuth(senderAadObjectId)) {
-      sendReaction({
-        aadObjectId: senderAadObjectId,
-        conversationType: convType,
-        conversationId,
-        messageId: activityId,
-        reactionType: 'like',
-        activity,
-      }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+    {
+      const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
+      if (reactUser) {
+        sendReaction({
+          aadObjectId: reactUser,
+          conversationType: convType,
+          conversationId,
+          messageId: activityId,
+          reactionType: '💬',
+          activity,
+        }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+      }
     }
 
     const mediaFiles = await downloadMedia();
@@ -538,15 +571,27 @@ async function handleMessage(ctx) {
     }
 
     // Auto-react on receipt (delegated auth, fire-and-forget)
-    if (!smartNoMention && hasAuth(senderAadObjectId)) {
-      sendReaction({
-        aadObjectId: senderAadObjectId,
-        conversationType: convType,
-        conversationId,
-        messageId: activityId,
-        reactionType: 'like',
-        activity,
-      }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+    if (!smartNoMention) {
+      const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
+      if (reactUser) {
+        if (convType === 'channel') {
+          const cd = activity?.channelData || {};
+          reactionContextCache.set(activityId, {
+            teamId: cd.team?.aadGroupId || cd.team?.id || cd.teamId,
+            channelId: cd.teamsChannelId || cd.channel?.id || cd.channelId,
+          });
+          persistReactionCache();
+          setTimeout(() => { reactionContextCache.delete(activityId); persistReactionCache(); }, 10 * 60_000);
+        }
+        sendReaction({
+          aadObjectId: reactUser,
+          conversationType: convType,
+          conversationId,
+          messageId: activityId,
+          reactionType: '💬',
+          activity,
+        }).catch(err => console.debug(`[teams] Auto-react skipped: ${err.message}`));
+      }
     }
 
     const groupRaw = extractMessageContent(activity);
@@ -566,16 +611,22 @@ async function handleMessage(ctx) {
     ensureReplay(conversationId, recordHistoryEntry, contextLimit);
     let contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
 
-    if (contextMessages.length === 0 && isGraphEnabled()) {
+    if (isGraphEnabled()) {
       try {
-        const teamId = activity.channelData?.team?.id || '';
+        const cd = activity.channelData || {};
+        const teamId = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
+        const channelId = cd.teamsChannelId || cd.channel?.id || cd.channelId || '';
+        const threadMatch = conversationId.match(/;messageid=(\d+)/);
+        const threadMessageId = threadMatch ? threadMatch[1] : '';
+        const authUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
+        const delegatedToken = authUser ? await getDelegatedToken(authUser) : '';
         const graphMessages = teamId
-          ? await fetchChannelHistory(teamId, conversationId, contextLimit)
+          ? await fetchChannelHistory(teamId, channelId, contextLimit, threadMessageId, delegatedToken || '')
           : await fetchChatHistory(conversationId, contextLimit);
         for (const gm of graphMessages) {
           recordHistoryEntry(conversationId, {
             timestamp: gm.time,
-            message_id: `graph-${gm.time}`,
+            message_id: gm.id || `graph-${gm.time}`,
             user_id: gm.from,
             user_name: gm.from,
             text: gm.body,
@@ -591,6 +642,9 @@ async function handleMessage(ctx) {
 
     // Voice auto-download detection
     const allAtts = activity.attachments || [];
+    if (allAtts.length > 0) {
+      console.log(`[teams] Attachments (${allAtts.length}): ${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: (a.contentUrl || '').substring(0, 120), name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 500) : JSON.stringify(a.content)?.substring(0, 500) })))}`);
+    }
     if (smartNoMention) {
       console.log(`[teams] Smart-no-mention debug: text=${JSON.stringify((activity.text || '').substring(0, 200))}, attachments=${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: a.contentUrl, name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 300) : JSON.stringify(a.content)?.substring(0, 300) })))}, channelData=${JSON.stringify(activity.channelData || {})}`);
     }
@@ -749,18 +803,46 @@ expressApp.post('/internal/send', async (req, res) => {
   }
 
   try {
-    const reference = getConversationReference(conversationId);
+    // Strip ;messageid= from conversationId for reference lookup
+    const baseConvId = conversationId.split(';')[0];
+    const reference = getConversationReference(baseConvId) || getConversationReference(conversationId);
     if (!reference) {
       return res.status(404).json({ error: 'no conversation reference found' });
     }
 
-    const activity = { type: 'message', text, textFormat: 'markdown' };
-    if (replyToId) activity.replyToId = replyToId;
-
-    await teamsApp.send(conversationId, activity);
+    // For channel thread replies, use Bot Connector REST API directly
+    // teamsApp.send() doesn't support replyToId for threading
+    if (type === 'channel' && replyToId && reference.serviceUrl) {
+      const botToken = await acquireTokenForScope('https://api.botframework.com/.default');
+      const serviceUrl = reference.serviceUrl.replace(/\/$/, '');
+      const activity = {
+        type: 'message',
+        text,
+        textFormat: 'markdown',
+        conversation: { id: conversationId },
+        replyToId,
+      };
+      const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(conversationId)}/activities`;
+      const apiRes = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(activity),
+      });
+      if (!apiRes.ok) {
+        const errText = await apiRes.text();
+        throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
+      }
+    } else {
+      const activity = { type: 'message', text, textFormat: 'markdown' };
+      if (replyToId) activity.replyToId = replyToId;
+      await teamsApp.send(baseConvId, activity);
+    }
 
     // Record bot's outgoing message in group context
-    recordHistoryEntry(conversationId, {
+    recordHistoryEntry(baseConvId, {
       timestamp: new Date().toISOString(),
       message_id: `bot:${Date.now()}`,
       user_id: 'bot',
@@ -897,7 +979,7 @@ expressApp.post('/internal/react', async (req, res) => {
     return res.status(403).json({ error: 'unauthorized' });
   }
 
-  const { conversationId, messageId, reactionType, aadObjectId, conversationType, teamId, channelId } = req.body || {};
+  const { conversationId, messageId, reactionType, aadObjectId, conversationType, teamId, channelId, action } = req.body || {};
   if (!conversationId || !messageId || !reactionType) {
     return res.status(400).json({ error: 'missing conversationId, messageId, or reactionType' });
   }
@@ -908,8 +990,18 @@ expressApp.post('/internal/react', async (req, res) => {
   }
 
   try {
-    const activity = teamId ? { channelData: { team: { id: teamId }, channel: { id: channelId } } } : {};
-    await sendReaction({
+    let resolvedTeamId = teamId;
+    let resolvedChannelId = channelId;
+    if (conversationType === 'channel' && !resolvedTeamId) {
+      const cached = reactionContextCache.get(messageId);
+      if (cached) {
+        resolvedTeamId = cached.teamId;
+        resolvedChannelId = cached.channelId;
+      }
+    }
+    const activity = resolvedTeamId ? { channelData: { team: { aadGroupId: resolvedTeamId, id: resolvedTeamId }, channel: { id: resolvedChannelId }, teamsChannelId: resolvedChannelId } } : {};
+    const reactionFn = action === 'remove' ? removeReaction : sendReaction;
+    await reactionFn({
       aadObjectId: authUser,
       conversationType: conversationType || 'group',
       conversationId,
