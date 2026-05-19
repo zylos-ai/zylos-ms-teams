@@ -73,12 +73,12 @@ console.log('   MSTEAMS_APP_ID=your_app_id');
 console.log('   MSTEAMS_APP_PASSWORD=your_app_password');
 console.log('');
 
-let webhookUrl = 'https://<your-domain>/teams/api/messages';
+let webhookUrl = 'https://<your-domain>/ms-teams/api/messages';
 try {
   const zylosConfig = JSON.parse(fs.readFileSync(path.join(HOME, 'zylos/.zylos/config.json'), 'utf8'));
   if (zylosConfig.domain) {
     const protocol = zylosConfig.protocol || 'https';
-    webhookUrl = `${protocol}://${zylosConfig.domain}/teams/api/messages`;
+    webhookUrl = `${protocol}://${zylosConfig.domain}/ms-teams/api/messages`;
   }
 } catch (e) {}
 

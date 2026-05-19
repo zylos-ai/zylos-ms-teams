@@ -73,7 +73,7 @@ Get credentials from your Azure Bot Registration:
 In Azure Bot Registration, set the messaging endpoint to:
 
 ```
-https://<your-domain>/teams/api/messages
+https://<your-domain>/ms-teams/api/messages
 ```
 
 ### Runtime Config

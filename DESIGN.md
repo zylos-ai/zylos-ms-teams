@@ -108,8 +108,8 @@ Located at `~/zylos/components/ms-teams/config.json`:
 ### 4.3 HTTP Routes
 
 Caddy proxies:
-- `/teams/api/messages` → `localhost:3978/api/messages` (Bot Framework webhook)
-- `/teams/api/notifications` → `localhost:3978/api/notifications` (Graph subscription webhook for smart-mode channels)
+- `/ms-teams/api/messages` → `localhost:3978/api/messages` (Bot Framework webhook)
+- `/ms-teams/api/notifications` → `localhost:3978/api/notifications` (Graph subscription webhook for smart-mode channels)
 
 ## 5. Security
 

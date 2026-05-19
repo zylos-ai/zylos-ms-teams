@@ -51,20 +51,21 @@ config:
       description: "Graph API token (enables chat history fallback)"
       sensitive: true
 
-next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
+next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/ms-teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
 
 http_routes:
-  - path: /teams/api/messages
+  - path: /ms-teams/api/messages
     type: reverse_proxy
     target: localhost:3978
-    strip_prefix: /teams
-  - path: /teams/api/notifications
+    strip_prefix: /ms-teams
+  - path: /ms-teams/api/notifications
     type: reverse_proxy
     target: localhost:3978
-    strip_prefix: /teams
+    strip_prefix: /ms-teams
 
 dependencies:
   - comm-bridge
+  - voice-asr
 ---
 
 # Microsoft Teams
