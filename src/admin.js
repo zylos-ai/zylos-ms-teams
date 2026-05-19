@@ -50,9 +50,16 @@ const commands = {
     }
   },
 
-  'add-group': (conversationId, name) => {
+  'add-group': (conversationId, name, mode) => {
     if (!conversationId || !name) {
-      console.error('Usage: admin.js add-group <conversation_id> <name>');
+      console.error('Usage: admin.js add-group <conversation_id> <name> [mode]');
+      console.error('  mode: mention (default) | smart');
+      process.exit(1);
+    }
+    const validModes = ['mention', 'smart'];
+    mode = String(mode || 'mention').trim().toLowerCase();
+    if (!validModes.includes(mode)) {
+      console.error(`Invalid mode "${mode}". Valid: ${validModes.join(', ')}`);
       process.exit(1);
     }
     const config = loadConfig();
@@ -64,6 +71,7 @@ const commands = {
     } else {
       config.groups[conversationId] = {
         name,
+        mode,
         allowFrom: [],
         added_at: new Date().toISOString()
       };
@@ -125,6 +133,128 @@ const commands = {
     saveConfigOrExit(config);
     console.log(`Group policy set to: ${normalizedPolicy}`);
     console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
+  'add-group-allow': (conversationId, userId) => {
+    if (!conversationId || !userId) {
+      console.error('Usage: admin.js add-group-allow <conversation_id> <aad_object_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.groups?.[conversationId]) {
+      console.error(`Group ${conversationId} not found. Add it first with add-group.`);
+      process.exit(1);
+    }
+    if (!Array.isArray(config.groups[conversationId].allowFrom)) {
+      config.groups[conversationId].allowFrom = [];
+    }
+    if (!config.groups[conversationId].allowFrom.includes(userId)) {
+      config.groups[conversationId].allowFrom.push(userId);
+      saveConfigOrExit(config);
+      console.log(`Added ${userId} to group "${config.groups[conversationId].name}" allowFrom`);
+    } else {
+      console.log(`${userId} already in group "${config.groups[conversationId].name}" allowFrom`);
+    }
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
+  'remove-group-allow': (conversationId, userId) => {
+    if (!conversationId || !userId) {
+      console.error('Usage: admin.js remove-group-allow <conversation_id> <aad_object_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.groups?.[conversationId]) {
+      console.error(`Group ${conversationId} not found.`);
+      process.exit(1);
+    }
+    const af = config.groups[conversationId].allowFrom || [];
+    const idx = af.indexOf(userId);
+    if (idx !== -1) {
+      af.splice(idx, 1);
+      config.groups[conversationId].allowFrom = af;
+      saveConfigOrExit(config);
+      console.log(`Removed ${userId} from group "${config.groups[conversationId].name}" allowFrom`);
+    } else {
+      console.log(`${userId} not found in group "${config.groups[conversationId].name}" allowFrom`);
+    }
+  },
+
+  'list-group-allow': (conversationId) => {
+    if (!conversationId) {
+      console.error('Usage: admin.js list-group-allow <conversation_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.groups?.[conversationId]) {
+      console.error(`Group ${conversationId} not found.`);
+      process.exit(1);
+    }
+    const grp = config.groups[conversationId];
+    const af = grp.allowFrom || [];
+    console.log(`Group: ${grp.name} (mode: ${grp.mode || 'mention'})`);
+    console.log(`allowFrom (${af.length}):`, af.length ? af.join(', ') : 'none (all group members allowed)');
+  },
+
+  'add-channel-allow': (channelId, userId) => {
+    if (!channelId || !userId) {
+      console.error('Usage: admin.js add-channel-allow <channelId> <aad_object_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.channels?.[channelId]) {
+      console.error(`Channel ${channelId} not found. Add it first with add-channel.`);
+      process.exit(1);
+    }
+    if (!Array.isArray(config.channels[channelId].allowFrom)) {
+      config.channels[channelId].allowFrom = [];
+    }
+    if (!config.channels[channelId].allowFrom.includes(userId)) {
+      config.channels[channelId].allowFrom.push(userId);
+      saveConfigOrExit(config);
+      console.log(`Added ${userId} to channel "${config.channels[channelId].name}" allowFrom`);
+    } else {
+      console.log(`${userId} already in channel "${config.channels[channelId].name}" allowFrom`);
+    }
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
+  'remove-channel-allow': (channelId, userId) => {
+    if (!channelId || !userId) {
+      console.error('Usage: admin.js remove-channel-allow <channelId> <aad_object_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.channels?.[channelId]) {
+      console.error(`Channel ${channelId} not found.`);
+      process.exit(1);
+    }
+    const af = config.channels[channelId].allowFrom || [];
+    const idx = af.indexOf(userId);
+    if (idx !== -1) {
+      af.splice(idx, 1);
+      config.channels[channelId].allowFrom = af;
+      saveConfigOrExit(config);
+      console.log(`Removed ${userId} from channel "${config.channels[channelId].name}" allowFrom`);
+    } else {
+      console.log(`${userId} not found in channel "${config.channels[channelId].name}" allowFrom`);
+    }
+  },
+
+  'list-channel-allow': (channelId) => {
+    if (!channelId) {
+      console.error('Usage: admin.js list-channel-allow <channelId>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    if (!config.channels?.[channelId]) {
+      console.error(`Channel ${channelId} not found.`);
+      process.exit(1);
+    }
+    const ch = config.channels[channelId];
+    const af = ch.allowFrom || [];
+    console.log(`Channel: ${ch.name} (mode: ${ch.mode || 'mention'})`);
+    console.log(`allowFrom (${af.length}):`, af.length ? af.join(', ') : 'none (all channel members allowed)');
   },
 
   'set-dm-policy': (policy) => {
@@ -348,16 +478,22 @@ Commands:
 
   Group Chat Management:
   list-groups                         List all configured group chats
-  add-group <conversation_id> <name>  Add a group chat
-  remove-group <conversation_id>      Remove a group chat
+  add-group <conv_id> <name> [mode]   Add a group chat (mode: mention|smart)
+  remove-group <conv_id>              Remove a group chat
   set-group-mode <conv_id> <mode>     Set group chat mode (smart|mention)
   set-group-policy <policy>           Set group policy (disabled|allowlist|open)
+  add-group-allow <conv_id> <aad_id>  Add user to per-group allowFrom
+  remove-group-allow <conv_id> <id>   Remove user from per-group allowFrom
+  list-group-allow <conv_id>          Show per-group allowFrom list
 
   Channel Management:
   list-channels                       List all configured channels
   add-channel <chId> <teamId> <name>  Add a channel
   remove-channel <chId>               Remove a channel
   set-channel-mode <chId> <mode>      Set channel mode (smart|mention)
+  add-channel-allow <chId> <aad_id>   Add user to per-channel allowFrom
+  remove-channel-allow <chId> <id>    Remove user from per-channel allowFrom
+  list-channel-allow <chId>           Show per-channel allowFrom list
 
   DM Access Control:
   set-dm-policy <open|allowlist|owner> Set DM policy

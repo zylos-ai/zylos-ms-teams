@@ -131,16 +131,22 @@ $ADM remove-dm-allow <aad_object_id>              # Remove user from dmAllowFrom
 
 # Group Chat Management
 $ADM list-groups                                  # List all configured group chats
-$ADM add-group <conversation_id> <name>           # Add a group chat
+$ADM add-group <conv_id> <name> [mode]            # Add a group chat (mode: mention|smart)
 $ADM remove-group <conversation_id>               # Remove a group chat
 $ADM set-group-policy <disabled|allowlist|open>    # Set group policy
 $ADM set-group-mode <conv_id> <mention|smart>      # Set group chat mode
+$ADM add-group-allow <conv_id> <aad_id>           # Add user to per-group allowFrom
+$ADM remove-group-allow <conv_id> <aad_id>        # Remove user from per-group allowFrom
+$ADM list-group-allow <conv_id>                   # Show per-group allowFrom list
 
 # Channel Management
 $ADM list-channels                                # List all configured channels
 $ADM add-channel <channelId> <teamId> <name>      # Add a channel
 $ADM remove-channel <channelId>                   # Remove a channel
 $ADM set-channel-mode <channelId> <mention|smart>  # Set channel mode
+$ADM add-channel-allow <chId> <aad_id>            # Add user to per-channel allowFrom
+$ADM remove-channel-allow <chId> <aad_id>         # Remove user from per-channel allowFrom
+$ADM list-channel-allow <chId>                    # Show per-channel allowFrom list
 
 # Diagnostics
 $ADM graph-status                                 # Show Graph API configuration state

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Admin CLI: per-group allowFrom management — `add-group-allow`, `remove-group-allow`, `list-group-allow`
+- Admin CLI: per-channel allowFrom management — `add-channel-allow`, `remove-channel-allow`, `list-channel-allow`
+- Admin CLI: `add-group` now accepts optional `[mode]` parameter (mention|smart), matching Lark CLI
+
+### Changed
+- Groups auto-added by owner now include `mode: "mention"` by default (previously omitted, causing inconsistent metadata)
+- Standardized group config schema: all groups now have `name`, `mode`, `allowFrom`, `added_at` fields
+
 ## [1.2.0] - 2026-05-18
 
 ### Added

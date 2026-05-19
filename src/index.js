@@ -776,6 +776,7 @@ teamsApp.on('conversationUpdate', async (ctx) => {
               const chatTitle = activity.conversation?.name || 'group';
               config.groups[conversationId] = {
                 name: chatTitle,
+                mode: 'mention',
                 allowFrom: [],
                 added_at: new Date().toISOString(),
               };
@@ -846,8 +847,8 @@ expressApp.post('/internal/send', async (req, res) => {
       return res.status(404).json({ error: 'no conversation reference found' });
     }
 
-    // For channel thread replies, use Bot Connector REST API directly
-    // teamsApp.send() doesn't support replyToId for threading
+    // For channel threads, use Bot Connector REST API (replyToId creates visible threading)
+    // For DMs/groups, replyToId has no visible effect — use teamsApp.send()
     if (type === 'channel' && replyToId && reference.serviceUrl) {
       const botToken = await acquireTokenForScope('https://api.botframework.com/.default');
       const serviceUrl = reference.serviceUrl.replace(/\/$/, '');
@@ -873,7 +874,6 @@ expressApp.post('/internal/send', async (req, res) => {
       }
     } else {
       const activity = { type: 'message', text, textFormat: 'markdown' };
-      if (replyToId) activity.replyToId = replyToId;
       await teamsApp.send(baseConvId, activity);
     }
 
