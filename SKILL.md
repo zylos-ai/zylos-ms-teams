@@ -65,14 +65,13 @@ http_routes:
 
 dependencies:
   - comm-bridge
-  - voice-asr
 ---
 
 # Microsoft Teams
 
 Microsoft Teams communication channel for zylos.
 
-Depends on: comm-bridge (C4 message routing).
+Depends on: comm-bridge (C4 message routing). Optional: voice-asr (auto-detected via ~/zylos/bin/transcribe; disabled gracefully when absent).
 
 ## Sending Messages
 
