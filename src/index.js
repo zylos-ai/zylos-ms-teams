@@ -34,6 +34,7 @@ const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
 const reactionContextCache = new Map();
+const pendingReactions = new Map();
 
 // Load persisted reaction context on startup
 try {
@@ -484,6 +485,8 @@ async function handleMessage(ctx) {
     {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
       if (reactUser) {
+        if (!pendingReactions.has(conversationId)) pendingReactions.set(conversationId, []);
+        pendingReactions.get(conversationId).push({ messageId: activityId, conversationType: convType, activity });
         sendReaction({
           aadObjectId: reactUser,
           conversationType: convType,
@@ -578,6 +581,8 @@ async function handleMessage(ctx) {
           persistReactionCache();
           setTimeout(() => { reactionContextCache.delete(activityId); persistReactionCache(); }, 10 * 60_000);
         }
+        if (!pendingReactions.has(conversationId)) pendingReactions.set(conversationId, []);
+        pendingReactions.get(conversationId).push({ messageId: activityId, conversationType: convType, activity });
         sendReaction({
           aadObjectId: reactUser,
           conversationType: convType,
@@ -1016,6 +1021,43 @@ expressApp.post('/internal/react', async (req, res) => {
   }
 
   const { conversationId, messageId, reactionType, aadObjectId, conversationType, teamId, channelId, action } = req.body || {};
+
+  // Remove all pending reactions for a conversation
+  if (action === 'remove-all' && conversationId && reactionType) {
+    const pending = pendingReactions.get(conversationId) || [];
+    pendingReactions.delete(conversationId);
+    if (pending.length === 0) return res.json({ ok: true, removed: 0 });
+
+    const authUser = aadObjectId || config.owner?.aadObjectId;
+    if (!authUser || !hasAuth(authUser)) {
+      return res.status(400).json({ error: 'no delegated auth available' });
+    }
+
+    let removed = 0;
+    for (const entry of pending) {
+      try {
+        let rTeamId, rChannelId;
+        if (entry.conversationType === 'channel') {
+          const cached = reactionContextCache.get(entry.messageId);
+          if (cached) { rTeamId = cached.teamId; rChannelId = cached.channelId; }
+        }
+        const act = rTeamId ? { channelData: { team: { aadGroupId: rTeamId, id: rTeamId }, channel: { id: rChannelId }, teamsChannelId: rChannelId } } : (entry.activity || {});
+        await removeReaction({
+          aadObjectId: authUser,
+          conversationType: entry.conversationType || 'group',
+          conversationId,
+          messageId: entry.messageId,
+          reactionType,
+          activity: act,
+        });
+        removed++;
+      } catch (err) {
+        console.debug(`[ms-teams] Remove pending reaction ${entry.messageId}: ${err.message}`);
+      }
+    }
+    return res.json({ ok: true, removed });
+  }
+
   if (!conversationId || !messageId || !reactionType) {
     return res.status(400).json({ error: 'missing conversationId, messageId, or reactionType' });
   }
@@ -1045,6 +1087,14 @@ expressApp.post('/internal/react', async (req, res) => {
       reactionType,
       activity,
     });
+    if (action === 'remove') {
+      const pending = pendingReactions.get(conversationId);
+      if (pending) {
+        const idx = pending.findIndex(e => e.messageId === messageId);
+        if (idx !== -1) pending.splice(idx, 1);
+        if (pending.length === 0) pendingReactions.delete(conversationId);
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error(`[ms-teams] Internal react error: ${err.message}`);
