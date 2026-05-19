@@ -1,113 +1,196 @@
 # Zylos Channel Component — Standardized Test Suite
 
-> Canonical test suite for validating zylos channel components (Teams, Lark, WeCom, etc.).
-> Tests are platform-agnostic where possible; platform-specific details noted inline.
+> Generic test checklist for validating zylos communication channel components.
+> Tests are split into **Core** (applies to all channels) and **Platform-Specific**
+> (only relevant to platforms with that capability).
 >
-> Source: [Lark Wiki](https://sigweb3labs.sg.larksuite.com/wiki/UphUwqJsxio9nkk1wgFl9l2NgSc)
+> When testing a new channel, run all Core tests and applicable Platform-Specific tests.
 
 ## Prerequisites
 
-- Two user accounts: **Owner** (admin, AAD/platform ID known) and **Non-Owner** (standard user)
-- At least one group chat and one channel (if the platform supports channels)
+- Two user accounts: **Owner** (admin, platform ID known) and **Non-Owner** (standard user)
+- At least one group chat (and one channel, if the platform supports channels)
 - Admin CLI available: `ADM="node $HOME/zylos/.claude/skills/<component>/src/admin.js"`
 - Component service running via PM2
 
 ---
 
-## 1. Core Messaging
+# Core Tests
 
-| ID | Test | Method | Expected |
-|----|------|--------|----------|
-| CM-1 | DM text send/receive | Send prompts via DM; verify bot recreates message content accurately | PASS — full text round-trip |
-| CM-2 | @mention parsing | @mention bot in group chat; verify username + platform user ID correctly extracted from logs | PASS |
-| CM-3 | Quoted reply detection | Reply to a previous message with @mention; verify bot extracts and references the quoted reply content | PASS |
-| CM-4 | Message deduplication | Send a message in group chat; verify via PM2 logs it was delivered to C4 exactly once (no duplicate processing) | PASS |
-| CM-5 | System event filtering | Add a member to group chat; verify system event (e.g. memberAdded) is silently ignored — no crash, no log entry in message processing | PASS |
-| CM-6 | Cold restart context reload | Run `pm2 restart <service>`; send @mention asking "what are we talking about"; verify bot replays JSONL context and references prior conversation accurately | PASS |
-| CM-7 | Typing indicator | Send DM message; verify "typing..." indicator appears while bot processes, stops after reply sent | PASS |
-| CM-8 | Emoji reaction on receive (DM) | Send DM; verify reaction (e.g. 💬) appears on message immediately, removed after bot replies | PASS |
-| CM-9 | Emoji reaction on receive (channel) | @mention in channel; verify reaction set via platform API, removed after reply | PASS |
-| CM-10 | Emoji reaction on receive (group chat) | Send message in group chat; verify reaction set and removed after reply. Note: may require different API path than DM reactions | PASS |
+These tests apply to **all** channel components (Teams, Lark, WeCom, Telegram, etc.).
 
-## 2. Media & Attachments
+## C1. DM Messaging
 
-| ID | Test | Method | Expected |
-|----|------|--------|----------|
-| MA-1 | Group chat image attachment (@mention) | Send image with @mention in group chat; verify bot describes image content accurately and file is downloaded to media directory | PASS |
-| MA-2 | Group chat file attachment — PDF (@mention) | Send PDF with @mention in group chat; verify bot summarizes document content and file is saved with original filename | PASS |
-| MA-3 | Group chat smart mode on-demand download (image) | Send image in smart-mode group chat without @mention; verify on-demand download script fetches it from platform API | PASS |
-| MA-4 | Group chat smart mode on-demand download (PDF) | Send PDF in smart-mode group chat without @mention; verify on-demand script fetches from platform API and bot summarizes content | PASS |
-| MA-5 | Group chat smart mode combined (image + PDF) | Send both image and PDF in single smart-mode group chat message; verify on-demand download fetches both and bot processes correctly | PASS |
-| MA-6 | Channel smart mode on-demand download (image + PDF) | Send image + PDF in smart-mode channel; verify subscription notification triggers and on-demand script fetches both via platform API | PASS |
-| MA-7 | Channel mention mode attachment (image + PDF) | @mention with image + PDF in mention-mode channel; verify attachments eagerly downloaded on receipt and bot processes both | PASS |
-| MA-8 | Group chat mention mode attachment download | @mention with non-standard file (e.g. .tex) in mention-mode group chat; verify file eagerly downloaded and bot identifies content | PASS |
-| MA-9 | Channel mention mode attachment (PDF only) | @mention with PDF in mention-mode channel; verify eagerly downloaded and bot provides detailed summary | PASS |
-| MA-10 | Smart media — no download without @mention | Send image in mention-mode group chat without @mention; verify via `ls -lt` that no new file is downloaded. Re-send with @mention; verify file appears | PASS |
-| MA-11 | Voice memo transcription | Send voice message in group chat; verify bot transcribes audio content and responds with transcript | PASS |
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C1-1 | Text round-trip | Send text DM; verify bot responds with accurate content | Full text round-trip works | |
+| C1-2 | Multi-line message | Send a message with multiple lines/paragraphs | Bot receives and processes all lines | |
+| C1-3 | Long message splitting | Trigger a response longer than platform limit; verify message splits correctly | Multiple chunks sent, no content lost | |
+| C1-4 | Owner auto-binding | First DM from a new user auto-binds them as owner | Owner recorded in config | |
 
-## 3. Smart Mode & Context
+## C2. Group Messaging
 
-| ID | Test | Method | Expected |
-|----|------|--------|----------|
-| SC-1 | Group chat smart mode (respond without @mention) | Set group chat mode to smart; send message without @mention; verify bot responds to message content | PASS |
-| SC-2 | Group chat mention-only mode (ignore non-@mention) | Set group chat mode to mention; send message without @mention — no response. Send with @mention — bot responds | PASS |
-| SC-3 | Channel smart mode (subscriptions) | Enable smart mode for channel; verify platform API subscription created with webhook endpoint. Channel messages received without @mention via change notifications. Auto-renewal confirmed | PASS |
-| SC-4 | Channel mention-only mode | Set channel to mention mode; send without @mention — no response. @mention — bot responds | PASS |
-| SC-5 | Subscription cleanup on mode switch | Switch channel from smart to mention mode; verify platform API subscription is deleted (not left stale) | PASS |
-| SC-6 | Group context window | Send multiple messages in group chat, then ask bot to summarize conversation; verify response includes accurate references to prior messages from context window | PASS |
-| SC-7 | On-demand download command always included | In smart mode, verify download command is always appended to C4 message regardless of whether webhook detected attachments | PASS |
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C2-1 | @mention response | @mention bot in group; verify bot responds | Response references message content | |
+| C2-2 | @mention parsing | @mention bot; verify sender name + platform ID extracted correctly in logs | Correct identity in C4 message | |
+| C2-3 | Ignore without @mention (mention mode) | Send message in mention-mode group without @mention | No response, no error | |
+| C2-4 | Smart mode response | Set group to smart mode; send without @mention | Bot receives and may respond | |
+| C2-5 | Quoted reply detection | Reply to a previous message with @mention; verify bot extracts quoted content | Quoted content included in C4 message | |
+| C2-6 | Message deduplication | Send message in group; verify via logs it reaches C4 exactly once | No duplicate processing | |
+| C2-7 | System event filtering | Add/remove a member; verify system event silently ignored | No crash, no processing | |
+| C2-8 | Context window | Send several messages, then ask bot to summarize; verify it references prior messages | Accurate context recall | |
+| C2-9 | Cold restart context | `pm2 restart <service>`; send @mention asking about prior conversation | Bot replays persisted context | |
+| C2-10 | Auto-add group (owner) | Owner adds bot to a new group; verify group auto-added to config | Group appears in config with mode: mention | |
+| C2-11 | Auto-add group (non-owner) | Non-owner adds bot to a group; verify pending approval flow | Owner notified, group not auto-approved | |
 
-## 4. Access Control
+## C3. DM Access Control
 
-| ID | Test | Method | Expected |
-|----|------|--------|----------|
-| AC-1 | DM policy: owner | Set dmPolicy=owner; non-owner sends DM — receives rejection message. Owner DM works | PASS |
-| AC-2 | DM policy: allowlist | Set dmPolicy=allowlist; add non-owner via add-dm-allow — DM accepted. Remove via remove-dm-allow — DM rejected | PASS |
-| AC-3 | DM policy: open | Set dmPolicy=open; non-owner (not in allowlist) sends DM — accepted and responded to | PASS |
-| AC-4 | Group chat per-group allowFrom | Set allowFrom to owner-only on a group chat; non-owner @mentions — receives rejection. Clear allowFrom; non-owner @mention accepted | PASS |
-| AC-5 | Group chat group policy: allowlist | Set groupPolicy=allowlist; only allowlisted group chats process messages. Non-allowlisted group chat messages ignored | PASS |
-| AC-6 | Group chat group policy: open | Set groupPolicy=open; messages from any group chat processed regardless of allowlist | PASS |
-| AC-7 | Channel allowFrom | Configure channel with allowFrom for specific user; verify only that user's @mentions are processed | PASS |
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C3-1 | dmPolicy: owner | Set policy to owner; non-owner DMs → rejected; owner DMs → accepted | Correct access enforcement | |
+| C3-2 | dmPolicy: allowlist | Set policy to allowlist; add non-owner → accepted; remove → rejected | Allowlist add/remove works | |
+| C3-3 | dmPolicy: open | Set policy to open; any user can DM | No access restrictions | |
+| C3-4 | Owner bypass | Owner always gets through regardless of dmPolicy setting | Owner never blocked | |
 
-## 5. Admin CLI
+## C4. Group Access Control
 
-| ID | Test | Method | Expected |
-|----|------|--------|----------|
-| CLI-1 | show-owner | `$ADM show-owner` → displays owner name + platform user ID | PASS |
-| CLI-2 | show (full config) | `$ADM show` → displays complete JSON config with all fields (owner, policies, groups, channels) | PASS |
-| CLI-3 | set-dm-policy | Toggle between owner → allowlist → open → owner; each change confirmed via list-dm-allow output | PASS |
-| CLI-4 | add-dm-allow / remove-dm-allow | Add non-owner user ID, verify in list; remove, verify gone | PASS |
-| CLI-5 | list-dm-allow | Displays current DM policy + allowlist entries (or "none") | PASS |
-| CLI-6 | set-group-policy | Toggle allowlist ↔ open; verify via list-groups output | PASS |
-| CLI-7 | list-groups | Lists all group chats with name, mode (smart/mention), and allowFrom | PASS |
-| CLI-8 | add-group / remove-group | Remove group chat, verify gone in list; re-add, verify present | PASS |
-| CLI-9 | set-group-mode | Set group chat mode to mention, verify via list-groups. Set back to smart, verify | PASS |
-| CLI-10 | list-channels | Lists channels with name, team ID, mode, and allowFrom | PASS |
-| CLI-11 | set-channel-mode | Set channel to mention mode, verify subscription cleaned up. Set to smart, verify subscription created | PASS |
-| CLI-12 | add-channel / remove-channel | Add channel with team ID, verify in list; remove, verify gone | PASS |
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C4-1 | groupPolicy: allowlist | Only groups in config are active; messages from unlisted groups ignored | Correct filtering | |
+| C4-2 | groupPolicy: open | Any group the bot is in processes messages | No group restrictions | |
+| C4-3 | groupPolicy: disabled | No group messages processed at all | All group messages dropped | |
+| C4-4 | Per-group allowFrom | Set allowFrom on a group to owner only; non-owner @mentions → rejected; clear → accepted | Sender filtering works | |
+| C4-5 | Owner bypass in groups | Owner messages always processed regardless of allowFrom or mode | Owner never blocked | |
 
-## 6. Not Tested
+## C5. Media & Attachments
 
-| ID | Test | Reason |
-|----|------|--------|
-| NT-1 | Multi-tenant (cross-organization) | Single-tenant test environment; multi-tenant requires separate identity provider tenant |
-| NT-2 | Rate limit / throttle handling | Would require sustained high message volume; not practical in manual testing |
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C5-1 | Image in DM | Send image via DM; verify bot describes content | Image downloaded and processed | |
+| C5-2 | File in DM | Send document (PDF, etc.) via DM; verify bot summarizes | File downloaded and processed | |
+| C5-3 | Image in group (@mention) | Send image with @mention in group; verify downloaded and described | File saved, content accurate | |
+| C5-4 | File in group (@mention) | Send document with @mention in group; verify downloaded and summarized | File saved, content accurate | |
+| C5-5 | No download without @mention (mention mode) | Send image in mention-mode group without @mention; verify no download | No file in media directory | |
+| C5-6 | Voice transcription | Send voice message; verify transcription via ASR | `[Voice] <transcript>` delivered to C4 | |
+| C5-7 | Voice ASR unavailable | Stop/remove ASR; send voice message; verify graceful fallback | Error message to user, no crash | |
+
+## C6. Admin CLI
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C6-1 | show | `$ADM show` → full JSON config | All fields displayed | |
+| C6-2 | show-owner | `$ADM show-owner` → owner name + ID | Correct identity | |
+| C6-3 | set-dm-policy | Toggle owner → allowlist → open → owner | Each change persisted | |
+| C6-4 | add/remove-dm-allow | Add user, verify in list; remove, verify gone | Allowlist updated | |
+| C6-5 | list-dm-allow | Displays policy + allowlist entries | Correct output | |
+| C6-6 | set-group-policy | Toggle allowlist ↔ open ↔ disabled | Each change persisted | |
+| C6-7 | list-groups | Lists groups with name, mode, allowFrom | Correct metadata | |
+| C6-8 | add-group / remove-group | Add group with name + mode; remove; verify | Config updated both ways | |
+| C6-9 | set-group-mode | Switch mention ↔ smart; verify via list | Mode change persisted | |
+| C6-10 | add/remove-group-allow | Add user to per-group allowFrom; remove; verify | Per-group allowlist updated | |
+| C6-11 | list-group-allow | Show per-group allowFrom list | Correct output | |
+
+## C7. Configuration & Metadata Consistency
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C7-1 | Auto-added group has default mode | Owner adds bot to new group; check config.json | Group has `mode: "mention"` set | |
+| C7-2 | Standardized group metadata | Inspect all groups in config; verify each has name, mode, allowFrom, added_at | Consistent schema across all groups | |
+| C7-3 | Admin CLI add-group with mode | `$ADM add-group <id> <name> smart`; verify mode in config | Mode set on creation | |
+| C7-4 | Admin CLI add-group default mode | `$ADM add-group <id> <name>` (no mode); verify defaults to mention | Default mode applied | |
+| C7-5 | Endpoint path consistency | Verify webhook endpoint in platform config matches Caddy/proxy route | No path mismatch between proxy and docs | |
+
+## C8. Service Lifecycle
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| C8-1 | Service start/stop | `pm2 start/stop <service>` | Clean start and stop | |
+| C8-2 | Config hot-reload | Edit config.json while running; verify changes take effect | No restart needed | |
+| C8-3 | Graceful error on missing credentials | Remove API credentials; restart; verify clear error message | No crash, helpful log | |
 
 ---
 
-## Summary
+# Platform-Specific Tests
 
-- **Total: 47 tests** — 45 PASS, 2 N/A
-- Tests conducted: 2026-05-17 and 2026-05-18
-- Platform: Microsoft Teams
-- Accounts: Felix Lin (owner), Felix Lin 2 (non-owner)
-- Groups: "Zylos Test GC" (smart), "group" (mention)
-- Channels: "General" (mention)
+Run these only if the platform supports the capability.
 
-### Final Config State (post-testing)
+## P1. Channels (Teams, Slack, Discord)
 
-- DM policy: owner (reverted)
-- Group policy: allowlist
-- Groups: "Zylos Test GC" (smart), "group" (mention)
-- Channels: "General" (mention)
-- Owner: Felix Lin (6a23b843)
+Platforms with a separate "channel" concept (team channels distinct from group chats).
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| P1-1 | Channel @mention response | @mention bot in channel; verify response | Bot responds in channel | |
+| P1-2 | Channel smart mode (subscriptions) | Enable smart mode; verify platform subscription created and messages received without @mention | Subscription active, messages flow | |
+| P1-3 | Channel mention mode | Set to mention; verify only @mentions processed | Non-mentions ignored | |
+| P1-4 | Subscription cleanup on mode switch | Switch smart → mention; verify subscription deleted | No stale subscriptions | |
+| P1-5 | Channel allowFrom | Set channel allowFrom to specific user; verify only that user processed | Sender filtering works | |
+| P1-6 | Channel admin CLI | list-channels, add-channel, remove-channel, set-channel-mode, add/remove/list-channel-allow | All commands work | |
+| P1-7 | Channel attachments (smart) | Send file in smart-mode channel; verify on-demand download | File fetched via platform API | |
+| P1-8 | Channel attachments (mention) | @mention with file in mention-mode channel; verify eager download | File downloaded on receipt | |
+
+## P2. Reactions / Processing Indicators (Teams, Lark, Slack)
+
+Platforms where bots can set emoji reactions on messages.
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| P2-1 | Reaction on DM receive | Send DM; verify thinking reaction appears, removed after reply | Reaction lifecycle correct | |
+| P2-2 | Reaction on group receive | Send group @mention; verify reaction set and removed | Reaction lifecycle correct | |
+| P2-3 | Multiple pending reactions | Send two messages quickly; verify both reactions removed on reply | All pending reactions cleared | |
+
+## P3. Typing Indicator (Telegram, some platforms)
+
+Platforms that support a "typing..." status.
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| P3-1 | Typing on DM | Send DM; verify typing indicator while processing | Indicator shown, stops after reply | |
+
+## P4. Delegated Auth (Teams, platforms requiring user-level tokens)
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| P4-1 | Auth sign-in flow | Generate auth URL; complete sign-in; verify token stored | auth-status shows active user | |
+| P4-2 | Auth revoke | Revoke user auth; verify removed | auth-status no longer lists user | |
+
+## P5. Smart Mode On-Demand Download (Teams, platforms without full webhook payloads)
+
+Platforms where smart-mode webhooks don't include attachment payloads.
+
+| ID | Test | Method | Expected | Result |
+|----|------|--------|----------|--------|
+| P5-1 | On-demand image download | Send image in smart group without @mention; run download script | Image fetched from API | |
+| P5-2 | On-demand file download | Send file in smart group without @mention; run download script | File fetched from API | |
+| P5-3 | Download command in C4 message | Verify download command always appended to smart-mode C4 messages | Command present regardless of webhook payload | |
+
+---
+
+# Not Typically Testable
+
+| ID | Area | Reason |
+|----|------|--------|
+| NT-1 | Multi-tenant / cross-org | Requires separate identity provider tenant |
+| NT-2 | Rate limit / throttle handling | Requires sustained high message volume |
+| NT-3 | Webhook signature verification | Internal security; not user-facing |
+
+---
+
+## How to Use This Checklist
+
+1. **New channel component**: Run all Core tests (C1–C8). Check which Platform-Specific sections apply and run those.
+2. **Upgrade/regression**: Re-run Core tests + any Platform-Specific tests related to changed functionality.
+3. **Recording results**: Fill in the Result column with PASS / FAIL / N/A and the date.
+
+### Platform Capability Matrix
+
+| Capability | Teams | Lark | Telegram | WeCom | Slack | Discord |
+|-----------|-------|------|----------|-------|-------|---------|
+| DM | Yes | Yes | Yes | Yes | Yes | Yes |
+| Groups | Yes | Yes | Yes | Yes | Yes | Yes |
+| Channels | Yes | No | No | No | Yes | Yes |
+| Reactions | Yes | Yes | No | No | Yes | Yes |
+| Typing indicator | No | No | Yes | No | Yes | No |
+| Delegated auth | Yes | No | No | No | Yes | No |
+| On-demand download | Yes | No | No | No | No | No |
