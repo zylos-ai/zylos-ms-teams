@@ -183,24 +183,69 @@ async function sendMedia(mediaType, filePath) {
   }
 }
 
+async function streamViaInternal(conversationId, action, { text, type, replyToId, streamId } = {}) {
+  const internalToken = readInternalToken();
+  if (!internalToken) throw new Error('Internal token not found');
+
+  const port = config.port || 3978;
+  const payload = { action, conversationId, streamId };
+  if (text) payload.text = text;
+  if (type) payload.type = type;
+  if (replyToId) payload.replyToId = replyToId;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/internal/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Token': internalToken },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sendText(text) {
   const chunks = splitMarkdownMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
   const triggerMsgId = parsedEndpoint.msg || null;
+  const type = parsedEndpoint.type || 'dm';
 
-  for (let i = 0; i < chunks.length; i++) {
+  if (chunks.length <= 1) {
     const opts = {};
-    // Reply-to: first chunk chains to trigger message
-    if (i === 0 && triggerMsgId) opts.replyToId = triggerMsgId;
-    await sendViaInternal(conversationId, chunks[i], opts);
-    if (i < chunks.length - 1) {
-      await sleep(500);
-    }
+    if (triggerMsgId) opts.replyToId = triggerMsgId;
+    await sendViaInternal(conversationId, chunks[0] || '', opts);
+    return;
   }
 
-  if (chunks.length > 1) {
-    console.log(`Sent ${chunks.length} chunks`);
+  // Multi-chunk: use stream start for first chunk (gets activity ID for updates),
+  // then send remaining chunks as separate messages
+  let streamId = null;
+  try {
+    const result = await streamViaInternal(conversationId, 'start', {
+      text: chunks[0],
+      type,
+      replyToId: triggerMsgId || undefined,
+    });
+    streamId = result.streamId;
+    await streamViaInternal(conversationId, 'end', { streamId });
+  } catch {
+    const opts = {};
+    if (triggerMsgId) opts.replyToId = triggerMsgId;
+    await sendViaInternal(conversationId, chunks[0], opts);
   }
+
+  for (let i = 1; i < chunks.length; i++) {
+    await sleep(500);
+    await sendViaInternal(conversationId, chunks[i]);
+  }
+
+  console.log(`Sent ${chunks.length} chunks`);
 }
 
 async function removeThinkingReaction() {
