@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Groups auto-added by owner now include `mode: "mention"` by default (previously omitted, causing inconsistent metadata)
 - Standardized group config schema: all groups now have `name`, `mode`, `allowFrom`, `added_at` fields
 
-## [1.2.0] - 2026-05-18
+## [0.1.2] - 2026-05-18
 
 ### Added
 - Channel management: separate `channels` top-level config with independent mode (smart/mention) and allowFrom per channel
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Group chat reaction bug: `resolveGraphChatId` was querying oneOnOne chats only; fixed to use `conversationId` directly for group chats
 - Channel attachment downloads in mention mode working for all file types (.pdf, .tex, images)
 
-## [0.2.0] - 2026-05-17
+## [0.1.1] - 2026-05-17
 
 ### Added
 - Smart mode: per-group mode (`mention`/`smart`) — in smart mode, bot receives all messages and Claude decides whether to respond

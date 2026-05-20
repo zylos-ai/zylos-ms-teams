@@ -1,6 +1,6 @@
 ---
 name: ms-teams
-version: 1.2.0
+version: 0.1.3
 description: >-
   Microsoft Teams communication channel.
   Use when: (1) replying to Teams messages (DM or group/channel @mentions),
