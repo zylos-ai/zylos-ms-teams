@@ -23,7 +23,7 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, formatGroupContext, acquireTokenForScope } from './lib/graph.js';
+import { isGraphEnabled, fetchChatHistory, fetchChannelHistory, acquireTokenForScope } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 import { ensureReplay, logEntry } from './lib/context.js';

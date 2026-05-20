@@ -58,68 +58,6 @@ if (!config.enabled) {
   process.exit(1);
 }
 
-function splitMessage(text, maxLength) {
-  if (text.length <= maxLength) return [text];
-
-  const chunks = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      const finalChunk = remaining.trim();
-      if (finalChunk.length > 0) {
-        chunks.push(finalChunk);
-      }
-      break;
-    }
-
-    let breakAt = maxLength;
-    const segment = remaining.substring(0, breakAt);
-    const fenceMatches = segment.match(/```/g);
-    const insideCodeBlock = fenceMatches && fenceMatches.length % 2 !== 0;
-
-    if (insideCodeBlock) {
-      const lastFenceStart = segment.lastIndexOf('```');
-      const lineBeforeFence = remaining.lastIndexOf('\n', lastFenceStart - 1);
-      if (lineBeforeFence > maxLength * 0.2) {
-        breakAt = lineBeforeFence;
-      } else {
-        const fenceEnd = remaining.indexOf('```', lastFenceStart + 3);
-        if (fenceEnd !== -1) {
-          const blockEnd = remaining.indexOf('\n', fenceEnd + 3);
-          breakAt = blockEnd !== -1 ? blockEnd + 1 : fenceEnd + 3;
-        }
-        if (breakAt > maxLength) {
-          breakAt = maxLength;
-        }
-      }
-    } else {
-      const chunk = remaining.substring(0, breakAt);
-      const lastParaBreak = chunk.lastIndexOf('\n\n');
-      if (lastParaBreak > maxLength * 0.3) {
-        breakAt = lastParaBreak + 1;
-      } else {
-        const lastNewline = chunk.lastIndexOf('\n');
-        if (lastNewline > maxLength * 0.3) {
-          breakAt = lastNewline;
-        } else {
-          const lastSpace = chunk.lastIndexOf(' ');
-          if (lastSpace > maxLength * 0.3) {
-            breakAt = lastSpace;
-          }
-        }
-      }
-    }
-
-    const nextChunk = remaining.substring(0, breakAt).trim();
-    if (nextChunk.length > 0) {
-      chunks.push(nextChunk);
-    }
-    remaining = remaining.substring(breakAt).trim();
-  }
-
-  return chunks;
-}
 
 function readInternalToken() {
   try {

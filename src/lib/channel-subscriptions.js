@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getCredentials, DATA_DIR } from './config.js';
-import { acquireTokenForScope } from './graph.js';
+import { acquireTokenForScope, graphRequest } from './graph.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
@@ -26,23 +26,6 @@ function saveSubscriptions(subs) {
   fs.renameSync(tmp, SUBS_FILE);
 }
 
-async function graphRequest(urlPath, options = {}) {
-  const token = await acquireTokenForScope(GRAPH_SCOPE);
-  const url = urlPath.startsWith('http') ? urlPath : `${GRAPH_BASE}${urlPath}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Graph API error (${res.status}): ${text}`);
-  }
-  return res.json();
-}
 
 function buildResource(teamId, channelId) {
   return `/teams/${teamId}/channels/${channelId}/messages`;

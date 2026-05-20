@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getCredentials, DATA_DIR } from './config.js';
+import { htmlToText } from './html.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
@@ -62,7 +63,7 @@ function acquireBotToken() {
   return acquireTokenForScope(BOT_SCOPE);
 }
 
-async function graphRequest(urlPath, options = {}) {
+export async function graphRequest(urlPath, options = {}) {
   const token = await acquireToken();
   const url = urlPath.startsWith('http') ? urlPath : `${GRAPH_BASE}${urlPath}`;
 
@@ -155,7 +156,7 @@ function formatGraphMessage(msg) {
     || msg.from?.application?.displayName
     || 'unknown';
   const body = msg.body?.contentType === 'html'
-    ? stripBasicHtml(msg.body.content || '')
+    ? htmlToText(msg.body.content || '')
     : (msg.body?.content || '');
   const time = msg.createdDateTime || '';
   const id = msg.id || '';
@@ -164,35 +165,6 @@ function formatGraphMessage(msg) {
   return { from, body, time, id, attachments };
 }
 
-function stripBasicHtml(html) {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
- * Format message history as a group-context block for C4.
- */
-export function formatGroupContext(messages) {
-  if (!messages || messages.length === 0) return '';
-
-  const lines = messages.map(m => {
-    const timeStr = m.time ? new Date(m.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
-    const attachStr = m.attachments.length > 0 ? ` [${m.attachments.join(', ')}]` : '';
-    return `[${timeStr}] ${m.from}: ${m.body}${attachStr}`;
-  });
-
-  return `<group-context>\n${lines.join('\n')}\n</group-context>`;
-}
 
 /**
  * Download hosted content (images/files) from a Teams message.
@@ -247,26 +219,3 @@ export async function fetchTeamMembers(teamId) {
   }));
 }
 
-/**
- * Upload a file to a chat via OneDrive and share it.
- * Returns the web URL of the uploaded file, or null on failure.
- */
-export async function uploadFileToDrive(filePath, chatId) {
-  if (!isGraphEnabled()) return null;
-
-  try {
-    const fileName = path.basename(filePath);
-    const content = fs.readFileSync(filePath);
-
-    const data = await graphRequest(`/me/drive/root:/${fileName}:/content`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: content,
-    });
-
-    return data.webUrl || null;
-  } catch (err) {
-    console.error(`[ms-teams/graph] Failed to upload file: ${err.message}`);
-    return null;
-  }
-}
