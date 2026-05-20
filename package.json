@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "cli": "node src/admin.js",
-    "test": "echo \"See CHANNEL_TESTSUITE.md for manual test suite\" && exit 0"
+    "test": "vitest run"
   },
   "homepage": "https://github.com/zylos-ai/zylos-ms-teams#readme",
   "bugs": {
@@ -29,11 +29,14 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@microsoft/teams.apps": "^2.0.5",
     "@microsoft/teams.api": "^2.0.5",
+    "@microsoft/teams.apps": "^2.0.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.6"
   }
 }

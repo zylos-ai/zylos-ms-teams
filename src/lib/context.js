@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 
@@ -12,42 +13,48 @@ function chatIdToLogFile(chatId) {
   return String(chatId).split(';')[0].replace(/[/:@]/g, '_') + '.jsonl';
 }
 
+const _writeQueues = new Map();
+
 export function logEntry(chatId, entry) {
   const logFile = path.join(LOGS_DIR, chatIdToLogFile(chatId));
-  try {
-    fs.appendFileSync(logFile, JSON.stringify(entry) + '\n');
-  } catch (err) {
+  const prev = _writeQueues.get(logFile) || Promise.resolve();
+  const next = prev.then(() =>
+    fsp.appendFile(logFile, JSON.stringify(entry) + '\n')
+  ).catch(err => {
     console.error(`[ms-teams] Log write failed for ${chatId}: ${err.message}`);
-  }
+  });
+  _writeQueues.set(logFile, next);
 }
 
-export function ensureReplay(chatId, recordFn, limit = 10) {
+export async function ensureReplay(chatId, recordFn, limit = 10) {
   const key = String(chatId);
   if (_replayedKeys.has(key)) return;
 
   const logFile = path.join(LOGS_DIR, chatIdToLogFile(key));
-  if (!fs.existsSync(logFile)) {
+  try {
+    await fsp.access(logFile);
+  } catch {
     _replayedKeys.add(key);
     return;
   }
 
   try {
-    const stat = fs.statSync(logFile);
+    const stat = await fsp.stat(logFile);
     const readSize = Math.min(stat.size, limit * BYTES_PER_ENTRY * 2);
     let content;
     if (readSize < stat.size) {
       const buf = Buffer.alloc(readSize);
-      const fd = fs.openSync(logFile, 'r');
+      const fh = await fsp.open(logFile, 'r');
       try {
-        fs.readSync(fd, buf, 0, readSize, stat.size - readSize);
+        await fh.read(buf, 0, readSize, stat.size - readSize);
       } finally {
-        fs.closeSync(fd);
+        await fh.close();
       }
       const text = buf.toString('utf-8');
       const firstNewline = text.indexOf('\n');
       content = firstNewline !== -1 ? text.substring(firstNewline + 1) : text;
     } else {
-      content = fs.readFileSync(logFile, 'utf-8');
+      content = await fsp.readFile(logFile, 'utf-8');
     }
     const lines = content.trim().split('\n').filter(l => l);
     const tail = lines.slice(-limit);
@@ -61,6 +68,13 @@ export function ensureReplay(chatId, recordFn, limit = 10) {
     _replayedKeys.add(key);
     if (tail.length > 0) {
       console.log(`[ms-teams] Replayed ${tail.length} log entries for ${key}`);
+    }
+
+    // Truncate log to just the tail entries we replayed
+    if (tail.length < lines.length) {
+      const trimmed = tail.map(l => l.endsWith('\n') ? l : l + '\n').join('');
+      await fsp.writeFile(logFile, trimmed);
+      console.log(`[ms-teams] Truncated log for ${key}: ${lines.length} → ${tail.length} entries`);
     }
   } catch (err) {
     console.error(`[ms-teams] Log replay failed for ${key}: ${err.message}`);

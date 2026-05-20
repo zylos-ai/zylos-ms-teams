@@ -24,9 +24,9 @@ let references = null;
 
 /**
  * Acquire a file lock using a lock file with O_EXCL (atomic create).
- * Returns true if lock acquired, false if timed out.
+ * Uses async sleep instead of busy-wait spin loop.
  */
-function acquireLock(timeoutMs = LOCK_TIMEOUT_MS) {
+async function acquireLock(timeoutMs = LOCK_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -44,9 +44,7 @@ function acquireLock(timeoutMs = LOCK_TIMEOUT_MS) {
             continue;
           }
         } catch {}
-        // Busy wait
-        const waitUntil = Date.now() + LOCK_RETRY_MS;
-        while (Date.now() < waitUntil) { /* spin */ }
+        await new Promise(r => setTimeout(r, LOCK_RETRY_MS));
         continue;
       }
       // Other error — skip locking
@@ -95,7 +93,6 @@ function pruneLRU(refs) {
   const keys = Object.keys(refs);
   if (keys.length <= MAX_ENTRIES) return refs;
 
-  // Sort by lastAccessed ascending (oldest first)
   const sorted = keys.sort((a, b) => {
     const tsA = refs[a].lastAccessed || refs[a].savedAt || 0;
     const tsB = refs[b].lastAccessed || refs[b].savedAt || 0;
@@ -113,14 +110,13 @@ function pruneLRU(refs) {
 /**
  * Load store from disk with locking.
  */
-function load() {
-  acquireLock();
+async function load() {
+  await acquireLock();
   try {
     if (fs.existsSync(STORE_PATH)) {
       const content = fs.readFileSync(STORE_PATH, 'utf8');
       references = JSON.parse(content);
 
-      // Migrate legacy entries (no lastAccessed) — set to savedAt or now
       const now = Date.now();
       for (const key of Object.keys(references)) {
         const entry = references[key];
@@ -146,8 +142,8 @@ function load() {
 /**
  * Save store to disk atomically with locking.
  */
-function save() {
-  acquireLock();
+async function save() {
+  await acquireLock();
   const tmpPath = STORE_PATH + '.tmp';
   try {
     fs.writeFileSync(tmpPath, JSON.stringify(references, null, 2));
@@ -166,34 +162,23 @@ function save() {
 
 /**
  * Get a conversation reference by ID. Updates lastAccessed on read.
- *
- * @param {string} conversationId
- * @returns {object|null} The conversation reference (with metadata stripped), or null
  */
-export function getConversationReference(conversationId) {
-  if (!references) load();
+export async function getConversationReference(conversationId) {
+  if (!references) await load();
   const entry = references[conversationId];
   if (!entry) return null;
 
-  // Update lastAccessed
   entry.lastAccessed = Date.now();
 
-  // Return the reference data (without our metadata)
   const { lastAccessed, savedAt, ...ref } = entry;
   return ref;
 }
 
 /**
  * Save or update a conversation reference.
- *
- * @param {string} conversationId
- * @param {object} reference - Bot Framework conversation reference
- * @param {object} [options]
- * @param {string} [options.tenantId] - Tenant ID for the conversation
- * @returns {boolean} Whether save succeeded
  */
-export function saveConversationReference(conversationId, reference, options = {}) {
-  if (!references) load();
+export async function saveConversationReference(conversationId, reference, options = {}) {
+  if (!references) await load();
 
   const now = Date.now();
   const existing = references[conversationId];
@@ -205,7 +190,6 @@ export function saveConversationReference(conversationId, reference, options = {
     lastAccessed: now,
   };
 
-  // Enforce cap after insertion
   pruneLRU(references);
 
   return save();
@@ -213,12 +197,9 @@ export function saveConversationReference(conversationId, reference, options = {
 
 /**
  * Remove a conversation reference.
- *
- * @param {string} conversationId
- * @returns {boolean}
  */
-export function removeConversationReference(conversationId) {
-  if (!references) load();
+export async function removeConversationReference(conversationId) {
+  if (!references) await load();
   if (references[conversationId]) {
     delete references[conversationId];
     return save();
@@ -228,18 +209,16 @@ export function removeConversationReference(conversationId) {
 
 /**
  * Get all conversation references (shallow copy, metadata included).
- *
- * @returns {object}
  */
-export function getAllConversationReferences() {
-  if (!references) load();
+export async function getAllConversationReferences() {
+  if (!references) await load();
   return { ...references };
 }
 
 /**
  * Force reload from disk.
  */
-export function reloadStore() {
+export async function reloadStore() {
   references = null;
   return load();
 }
