@@ -27,7 +27,8 @@ import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHis
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
-import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage } from './lib/channel-subscriptions.js';
+import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getClientState } from './lib/channel-subscriptions.js';
+import { writeJsonAtomic } from './lib/atomic-write.js';
 import { createAccessControl, createMentionHelpers, stripThreadId } from './lib/access.js';
 import { recordHistoryEntry, getInMemoryContext, formatContextBlock, ensureReplay } from './lib/history.js';
 import { registerRoutes } from './routes.js';
@@ -47,8 +48,7 @@ try {
 
 function persistReactionCache() {
   try {
-    const obj = Object.fromEntries(reactionContextCache);
-    fs.writeFileSync(REACTION_CACHE_FILE, JSON.stringify(obj), 'utf8');
+    writeJsonAtomic(REACTION_CACHE_FILE, Object.fromEntries(reactionContextCache));
   } catch {}
 }
 
@@ -317,13 +317,19 @@ async function handleMessage(ctx) {
   console.log(`[ms-teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
 
   const historyText = htmlToText(mentions.stripBotMention(activity));
-  recordHistory(conversationId, {
-    timestamp: activity.timestamp || new Date().toISOString(),
-    message_id: activityId,
-    user_id: senderAadObjectId,
-    user_name: senderName,
-    text: historyText,
-  });
+  function recordAccepted() {
+    recordHistory(conversationId, {
+      timestamp: activity.timestamp || new Date().toISOString(),
+      message_id: activityId,
+      user_id: senderAadObjectId,
+      user_name: senderName,
+      text: historyText,
+    });
+  }
+
+  function logRejection(reason) {
+    console.log(`[ms-teams] Rejected: sender=${senderAadObjectId}, name=${senderName}, conv=${conversationId}, reason=${reason}`);
+  }
 
   async function downloadMedia() {
     let dlgToken;
@@ -361,10 +367,12 @@ async function handleMessage(ctx) {
     }
 
     if (!access.isDmAllowed(senderAadObjectId)) {
-      console.log(`[ms-teams] DM from non-allowed user ${senderAadObjectId} (dmPolicy=${config.dmPolicy || 'owner'}), rejecting`);
+      logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
       await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
       return;
     }
+
+    recordAccepted();
 
     {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
@@ -419,7 +427,7 @@ async function handleMessage(ctx) {
     const smartNoMention = smart && !mentioned;
 
     if (groupPolicy === 'disabled') {
-      console.log(`[ms-teams] Group policy disabled, ignoring message from ${senderAadObjectId}`);
+      logRejection('groupPolicy=disabled');
       return;
     }
 
@@ -428,7 +436,7 @@ async function handleMessage(ctx) {
     if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
       if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
         if (mentioned) {
-          console.log(`[ms-teams] User ${senderAadObjectId} not in route allowFrom, rejecting`);
+          logRejection('not in allowFrom');
           await ctx.send("Sorry, you don't have access in this channel.");
         }
         return;
@@ -437,7 +445,7 @@ async function handleMessage(ctx) {
 
     if (!allowedGroup && !senderIsOwner) {
       if (mentioned) {
-        console.log(`[ms-teams] Group ${conversationId} not allowed, rejecting`);
+        logRejection('group not allowed');
         await ctx.send("Sorry, I'm not available in this group.");
       }
       return;
@@ -452,6 +460,8 @@ async function handleMessage(ctx) {
     if (!mentioned && senderIsOwner && !allowedGroup) {
       // Owner in non-allowed group without mention: process as owner override
     }
+
+    recordAccepted();
 
     if (!smartNoMention) {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;

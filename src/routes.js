@@ -6,6 +6,24 @@ import { getConfig, getCredentials } from './lib/config.js';
 import { getConversationReference } from './lib/conversation-store.js';
 import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
+import { validateClientState } from './lib/channel-subscriptions.js';
+
+function buildRedirectUri(req) {
+  const publicUrl = process.env.MSTEAMS_PUBLIC_URL;
+  if (publicUrl) {
+    try {
+      const parsed = new URL(publicUrl);
+      if (parsed.protocol !== 'https:') {
+        console.warn('[ms-teams/auth] MSTEAMS_PUBLIC_URL is not HTTPS, falling back to headers');
+      } else {
+        return `${parsed.origin}/auth/callback`;
+      }
+    } catch {}
+  }
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers['host'];
+  return `${protocol}://${host}/auth/callback`;
+}
 
 /**
  * Register all HTTP routes on the Express app.
@@ -304,9 +322,7 @@ export function registerRoutes(expressApp, deps) {
       return res.status(400).send('Invalid or expired state. Please try signing in again.');
     }
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.headers['host'];
-    const redirectUri = `${protocol}://${host}/auth/callback`;
+    const redirectUri = buildRedirectUri(req);
 
     try {
       const { aadObjectId, displayName } = await exchangeCode(code, state, redirectUri);
@@ -318,9 +334,7 @@ export function registerRoutes(expressApp, deps) {
   });
 
   expressApp.get('/auth/sign-in', (req, res) => {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.headers['host'];
-    const redirectUri = `${protocol}://${host}/auth/callback`;
+    const redirectUri = buildRedirectUri(req);
 
     try {
       const { url } = buildAuthUrl(redirectUri);
@@ -435,6 +449,10 @@ export function registerRoutes(expressApp, deps) {
 
     const notifications = req.body?.value || [];
     for (const notification of notifications) {
+      if (!validateClientState(notification.clientState)) {
+        console.warn(`[ms-teams/subs] Notification rejected: invalid clientState`);
+        continue;
+      }
       try {
         await handleChannelNotification(notification);
       } catch (err) {

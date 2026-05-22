@@ -1,13 +1,43 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { getCredentials, DATA_DIR } from './config.js';
 import { acquireTokenForScope, graphRequest } from './graph.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 const SUBS_FILE = path.join(DATA_DIR, 'channel-subscriptions.json');
+const CLIENT_STATE_FILE = path.join(DATA_DIR, 'subscription-client-state');
 const RENEWAL_MARGIN_MS = 5 * 60_000;
 const MAX_LIFETIME_MIN = 55;
+
+let cachedClientState = null;
+
+export function getClientState() {
+  if (cachedClientState) return cachedClientState;
+  try {
+    if (fs.existsSync(CLIENT_STATE_FILE)) {
+      cachedClientState = fs.readFileSync(CLIENT_STATE_FILE, 'utf8').trim();
+      if (cachedClientState) return cachedClientState;
+    }
+  } catch {}
+  cachedClientState = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.mkdirSync(path.dirname(CLIENT_STATE_FILE), { recursive: true });
+    fs.writeFileSync(CLIENT_STATE_FILE, cachedClientState, { mode: 0o600 });
+  } catch (err) {
+    console.error(`[ms-teams/subs] Failed to persist clientState: ${err.message}`);
+  }
+  return cachedClientState;
+}
+
+export function validateClientState(incoming) {
+  const expected = getClientState();
+  if (!incoming || !expected) return false;
+  const a = crypto.createHash('sha256').update(incoming).digest();
+  const b = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 
 let renewalTimer = null;
 
@@ -42,7 +72,7 @@ export async function createSubscription(teamId, channelId, notificationUrl) {
     notificationUrl,
     resource,
     expirationDateTime: expirationDateTime(),
-    clientState: getCredentials().tenantId,
+    clientState: getClientState(),
   };
 
   console.log(`[ms-teams/subs] Creating subscription for ${resource}`);

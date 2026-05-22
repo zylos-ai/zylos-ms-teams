@@ -63,6 +63,11 @@ MSTEAMS_TENANT_ID=your_tenant_id
 
 # Optional: enables Graph API for chat history fallback
 MSTEAMS_GRAPH_TOKEN=your_graph_token
+
+# Optional: canonical public URL for OAuth redirects and Graph subscriptions
+# Must be HTTPS. When set, used instead of x-forwarded-* headers for redirect URIs.
+# Falls back to header-based detection if not configured (less trusted).
+MSTEAMS_PUBLIC_URL=https://bot.example.com
 ```
 
 Get credentials from your Azure Bot Registration:
@@ -169,7 +174,7 @@ Controls which groups/channels the bot responds in:
 
 ### Owner
 
-The first user to send a DM becomes the owner. The owner always bypasses all access control checks.
+The first user to send a DM becomes the owner. The owner bypasses DM and group/channel access control checks, except when `groupPolicy: disabled` — that setting is absolute and blocks all group messages for everyone, including the owner.
 
 ## Smart Mode
 

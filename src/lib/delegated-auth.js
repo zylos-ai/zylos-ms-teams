@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { getCredentials, DATA_DIR } from './config.js';
+import { writeJsonAtomic } from './atomic-write.js';
 
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
 const AUTH_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize';
@@ -21,8 +22,7 @@ function loadTokens() {
 
 function saveTokens() {
   try {
-    fs.mkdirSync(path.dirname(TOKENS_FILE), { recursive: true });
-    fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    writeJsonAtomic(TOKENS_FILE, tokens, 0o600);
   } catch (err) {
     console.error(`[ms-teams/delegated-auth] Failed to save tokens: ${err.message}`);
   }
