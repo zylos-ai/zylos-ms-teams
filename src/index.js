@@ -314,10 +314,11 @@ async function handleMessage(ctx) {
   const text = htmlToText(rawText);
   let quotedReply = extractQuotedReply(activity);
 
-  console.log(`[ms-teams] ${convType} message from ${senderName} (${senderAadObjectId}): ${text.substring(0, 50)}...`);
+  console.log(`[ms-teams] ${convType} message from ${senderName} (${senderAadObjectId})`);
 
   const historyText = htmlToText(mentions.stripBotMention(activity));
   function recordAccepted() {
+    console.log(`[ms-teams] Accepted: ${convType} from ${senderName}: ${text.substring(0, 50)}...`);
     recordHistory(conversationId, {
       timestamp: activity.timestamp || new Date().toISOString(),
       message_id: activityId,
@@ -919,8 +920,24 @@ async function startServerWithRetry(port, maxRetries = MAX_LISTEN_RETRIES) {
   throw new Error(`Failed to bind port ${port} after ${maxRetries} attempts`);
 }
 
+function validatePublicUrl(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:') {
+      console.warn(`[ms-teams] MSTEAMS_PUBLIC_URL is not HTTPS (${parsed.protocol}), ignoring`);
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    console.warn(`[ms-teams] MSTEAMS_PUBLIC_URL is malformed, ignoring`);
+    return null;
+  }
+}
+
 async function getPublicUrl() {
-  if (process.env.MSTEAMS_PUBLIC_URL) return process.env.MSTEAMS_PUBLIC_URL;
+  const configured = validatePublicUrl(process.env.MSTEAMS_PUBLIC_URL);
+  if (configured) return configured;
   try {
     const res = await fetch('http://127.0.0.1:4040/api/tunnels');
     const data = await res.json();
