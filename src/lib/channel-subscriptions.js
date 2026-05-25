@@ -119,6 +119,7 @@ export async function deleteSubscription(subId) {
     await fetch(`${GRAPH_BASE}/subscriptions/${subId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
     });
     console.log(`[ms-teams/subs] Subscription deleted: ${subId}`);
   } catch (err) {

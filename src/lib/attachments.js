@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { acquireTokenForScope, MEDIA_DIR, isGraphEnabled } from './graph.js';
+import { timedFetch, safeFetch } from './fetch-utils.js';
+import { extractChannelIds } from './format.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const BOT_FRAMEWORK_SCOPE = 'https://api.botframework.com/.default';
@@ -166,8 +168,12 @@ async function saveBuffer(buffer, filename) {
   fs.mkdirSync(MEDIA_DIR, { recursive: true });
   const safeName = (filename || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
   const filePath = path.join(MEDIA_DIR, `${Date.now()}_${safeName}`);
-  fs.writeFileSync(filePath, buffer);
-  return filePath;
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(MEDIA_DIR) + path.sep)) {
+    throw new Error('Path traversal blocked');
+  }
+  fs.writeFileSync(resolved, buffer);
+  return resolved;
 }
 
 function scopeCandidatesForUrl(url) {
@@ -181,9 +187,10 @@ function scopeCandidatesForUrl(url) {
 async function fetchWithAuthFallback(url, tokenProvider) {
   if (!isUrlAllowed(url, DEFAULT_MEDIA_ALLOW_HOSTS)) return null;
 
-  // Try unauthenticated first
+  const safeOpts = { allowHosts: DEFAULT_MEDIA_ALLOW_HOSTS, timeoutMs: 60_000 };
+
   try {
-    const res = await fetch(url, { redirect: 'follow' });
+    const res = await safeFetch(url, {}, safeOpts);
     if (res.ok) return res;
     if (res.status !== 401 && res.status !== 403) return null;
   } catch { /* fall through to auth attempts */ }
@@ -195,10 +202,9 @@ async function fetchWithAuthFallback(url, tokenProvider) {
     try {
       const token = await tokenProvider(scope);
       if (!token) continue;
-      const res = await fetch(url, {
-        redirect: 'follow',
+      const res = await safeFetch(url, {
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }, safeOpts);
       if (res.ok) return res;
       if (res.status !== 401 && res.status !== 403) continue;
     } catch { /* try next scope */ }
@@ -290,9 +296,9 @@ async function downloadBotFrameworkAttachments({ serviceUrl, attachmentIds, toke
     if (!isUrlAllowed(infoUrl, DEFAULT_MEDIA_ALLOW_HOSTS)) continue;
 
     try {
-      const infoRes = await fetch(infoUrl, {
+      const infoRes = await timedFetch(infoUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }, 30_000);
       if (!infoRes.ok) continue;
 
       const info = await infoRes.json();
@@ -303,9 +309,9 @@ async function downloadBotFrameworkAttachments({ serviceUrl, attachmentIds, toke
       if (typeof view.size === 'number' && view.size > MAX_MEDIA_BYTES) continue;
 
       const viewUrl = `${baseUrl}/v3/attachments/${encodeURIComponent(attachmentId)}/views/${encodeURIComponent(view.viewId)}`;
-      const viewRes = await fetch(viewUrl, {
+      const viewRes = await timedFetch(viewUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }, 60_000);
       if (!viewRes.ok) continue;
 
       const cl = viewRes.headers.get('content-length');
@@ -350,9 +356,9 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
     // Fetch the message from Graph to get full attachment details
     let msgData;
     try {
-      const msgRes = await fetch(messageUrl, {
+      const msgRes = await timedFetch(messageUrl, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }, 30_000);
       console.debug(`[ms-teams/attachments] Graph fetch ${messageUrl} → ${msgRes.status}`);
       if (!msgRes.ok) {
         const errBody = await msgRes.text().catch(() => '');
@@ -373,10 +379,9 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
       if ((att.contentType || '').toLowerCase() !== 'reference' || !att.contentUrl) continue;
       try {
         const sharesUrl = `${GRAPH_BASE}/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`;
-        const res = await fetch(sharesUrl, {
-          redirect: 'follow',
+        const res = await safeFetch(sharesUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        }, { allowHosts: DEFAULT_MEDIA_ALLOW_HOSTS, timeoutMs: 60_000 });
         if (!res.ok) continue;
 
         const cl = res.headers.get('content-length');
@@ -396,9 +401,9 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
 
     // Download hosted content (inline images)
     try {
-      const hostedRes = await fetch(`${messageUrl}/hostedContents`, {
+      const hostedRes = await timedFetch(`${messageUrl}/hostedContents`, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }, 30_000);
       if (hostedRes.ok) {
         const hostedData = await hostedRes.json();
         for (const item of (hostedData.value || [])) {
@@ -409,9 +414,9 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
             const savedPath = await saveBuffer(buffer, `hosted.${(mime || '').split('/')[1] || 'bin'}`);
             out.push({ path: savedPath, contentType: mime, placeholder: inferPlaceholder(mime) });
           } else if (item.id) {
-            const valRes = await fetch(`${messageUrl}/hostedContents/${encodeURIComponent(item.id)}/$value`, {
+            const valRes = await timedFetch(`${messageUrl}/hostedContents/${encodeURIComponent(item.id)}/$value`, {
               headers: { Authorization: `Bearer ${accessToken}` },
-            });
+            }, 60_000);
             if (!valRes.ok) continue;
             const cl = valRes.headers.get('content-length');
             if (cl && Number(cl) > MAX_MEDIA_BYTES) continue;
@@ -460,10 +465,8 @@ function buildGraphMessageUrls({ conversationType, conversationId, activity }) {
   if (cdMsgId) candidates.add(String(cdMsgId).trim());
 
   if (conversationType === 'channel') {
-    const teamId = channelData?.team?.aadGroupId || channelData?.team?.id || channelData?.teamId;
-    const channelId = channelData?.teamsChannelId || channelData?.channel?.id || channelData?.channelId;
+    const { teamId, channelId } = extractChannelIds(channelData);
     if (!teamId || !channelId) return [];
-    // Extract thread root from conversationId (;messageid=XXXX) as fallback for replyToId
     const threadMatch = (conversationId || '').match(/;messageid=(\d+)/);
     const threadRootId = replyToId || (threadMatch ? threadMatch[1] : '');
     const urls = [];
@@ -506,9 +509,7 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
 
   let url;
   if (conversationType === 'channel') {
-    const channelData = activity.channelData || {};
-    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
-    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
+    const { teamId, channelId } = extractChannelIds(activity.channelData);
     if (!teamId || !channelId) return [];
     const threadMatch = (activity.conversation?.id || '').match(/;messageid=(\d+)/);
     const threadRootId = threadMatch ? threadMatch[1] : '';
@@ -523,7 +524,7 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
 
   let messages;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const res = await timedFetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }, 30_000);
     if (!res.ok) return [];
     const data = await res.json();
     messages = data.value || [];
@@ -545,10 +546,9 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
       if ((att.contentType || '').toLowerCase() !== 'reference' || !att.contentUrl) continue;
       try {
         const sharesUrl = `${GRAPH_BASE}/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`;
-        const res = await fetch(sharesUrl, {
-          redirect: 'follow',
+        const res = await safeFetch(sharesUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        }, { allowHosts: DEFAULT_MEDIA_ALLOW_HOSTS, timeoutMs: 60_000 });
         if (!res.ok) continue;
         const cl = res.headers.get('content-length');
         if (cl && Number(cl) > MAX_MEDIA_BYTES) continue;

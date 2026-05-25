@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from '../src/lib/format.js';
+import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage, extractChannelIds } from '../src/lib/format.js';
 
 describe('escapeXml', () => {
   it('escapes all XML special characters', () => {
@@ -124,5 +124,38 @@ describe('formatMessage', () => {
     expect(group).toContain('GROUP:unknown');
     const channel = formatMessage('channel', 'X', 'y');
     expect(channel).toContain('CHANNEL:unknown');
+  });
+});
+
+describe('extractChannelIds', () => {
+  it('extracts from team.aadGroupId and teamsChannelId', () => {
+    const result = extractChannelIds({
+      team: { aadGroupId: 'aad-123', id: 'id-456' },
+      teamsChannelId: 'ch-789',
+      channel: { id: 'ch-alt' },
+    });
+    expect(result).toEqual({ teamId: 'aad-123', channelId: 'ch-789' });
+  });
+
+  it('falls back to team.id and channel.id', () => {
+    const result = extractChannelIds({
+      team: { id: 'id-456' },
+      channel: { id: 'ch-alt' },
+    });
+    expect(result).toEqual({ teamId: 'id-456', channelId: 'ch-alt' });
+  });
+
+  it('falls back to teamId and channelId', () => {
+    const result = extractChannelIds({ teamId: 't-1', channelId: 'c-2' });
+    expect(result).toEqual({ teamId: 't-1', channelId: 'c-2' });
+  });
+
+  it('returns empty strings when channelData is null/undefined', () => {
+    expect(extractChannelIds(null)).toEqual({ teamId: '', channelId: '' });
+    expect(extractChannelIds(undefined)).toEqual({ teamId: '', channelId: '' });
+  });
+
+  it('returns empty strings when fields are missing', () => {
+    expect(extractChannelIds({})).toEqual({ teamId: '', channelId: '' });
   });
 });

@@ -8,7 +8,7 @@ import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 
-function buildRedirectUri(req) {
+export function buildRedirectUri(req) {
   const publicUrl = process.env.MSTEAMS_PUBLIC_URL;
   if (publicUrl) {
     try {
@@ -16,13 +16,15 @@ function buildRedirectUri(req) {
       if (parsed.protocol !== 'https:') {
         console.warn('[ms-teams/auth] MSTEAMS_PUBLIC_URL is not HTTPS, falling back to headers');
       } else {
-        return `${parsed.origin}/auth/callback`;
+        const base = `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
+        return `${base}/auth/callback`;
       }
     } catch {}
   }
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers['x-forwarded-host'] || req.headers['host'];
-  return `${protocol}://${host}/auth/callback`;
+  const prefix = (req.headers['x-forwarded-prefix'] || '').replace(/\/$/, '');
+  return `${protocol}://${host}${prefix}/auth/callback`;
 }
 
 /**
@@ -94,6 +96,7 @@ export function registerRoutes(expressApp, deps) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(activity),
+          signal: AbortSignal.timeout(30_000),
         });
         if (!apiRes.ok) {
           const errText = await apiRes.text();
@@ -162,6 +165,7 @@ export function registerRoutes(expressApp, deps) {
           method: 'POST',
           headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(activity),
+          signal: AbortSignal.timeout(30_000),
         });
         if (!apiRes.ok) {
           const errText = await apiRes.text();
@@ -204,6 +208,7 @@ export function registerRoutes(expressApp, deps) {
             method: 'PUT',
             headers: { Authorization: `Bearer ${stream.botToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(updateActivity),
+            signal: AbortSignal.timeout(30_000),
           });
           if (!apiRes.ok) {
             const errText = await apiRes.text();

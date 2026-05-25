@@ -8,6 +8,14 @@ export function escapeXml(text) {
     .replace(/"/g, '&quot;');
 }
 
+export function extractChannelIds(channelData) {
+  const cd = channelData || {};
+  return {
+    teamId: cd.team?.aadGroupId || cd.team?.id || cd.teamId || '',
+    channelId: cd.teamsChannelId || cd.channel?.id || cd.channelId || '',
+  };
+}
+
 export function buildEndpoint(conversationId, { type, aadObjectId, activityId } = {}) {
   let endpoint = conversationId;
   if (type) endpoint += `|type:${type}`;

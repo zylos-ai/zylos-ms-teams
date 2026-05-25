@@ -64,6 +64,14 @@ http_routes:
     type: reverse_proxy
     target: localhost:3978
     strip_prefix: /ms-teams
+  - path: /ms-teams/auth/*
+    type: reverse_proxy
+    target: localhost:3978
+    strip_prefix: /ms-teams
+  - path: /ms-teams/health
+    type: reverse_proxy
+    target: localhost:3978
+    strip_prefix: /ms-teams
 
 dependencies:
   - comm-bridge

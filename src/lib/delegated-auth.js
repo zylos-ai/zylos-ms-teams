@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { getCredentials, DATA_DIR } from './config.js';
 import { writeJsonAtomic } from './atomic-write.js';
+import { extractChannelIds } from './format.js';
 
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
 const AUTH_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize';
@@ -80,6 +81,7 @@ export async function exchangeCode(code, state, redirectUri) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -125,6 +127,7 @@ async function refreshToken(aadObjectId) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -182,6 +185,7 @@ export function revokeAuth(aadObjectId) {
 // ── Graph Chat ID Resolution ──
 
 const chatIdCache = new Map();
+const CHAT_ID_CACHE_MAX = 200;
 
 async function resolveGraphChatId(aadObjectId, conversationId) {
   if (chatIdCache.has(conversationId)) return chatIdCache.get(conversationId);
@@ -191,6 +195,7 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
 
   const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=chatType eq 'oneOnOne'&$top=10&$select=id,topic,chatType`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -207,6 +212,10 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
   // Use the most recently active oneOnOne chat (caller invokes this right after receiving a message)
   const chat = data.value?.[0];
   if (chat) {
+    if (chatIdCache.size >= CHAT_ID_CACHE_MAX) {
+      const oldest = chatIdCache.keys().next().value;
+      chatIdCache.delete(oldest);
+    }
     chatIdCache.set(conversationId, chat.id);
     return chat.id;
   }
@@ -221,9 +230,7 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
 
   let url;
   if (conversationType === 'channel') {
-    const channelData = activity?.channelData || {};
-    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
-    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
+    const { teamId, channelId } = extractChannelIds(activity?.channelData);
     console.debug(`[ms-teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
@@ -245,6 +252,7 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ reactionType }),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -260,9 +268,7 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
 
   let url;
   if (conversationType === 'channel') {
-    const channelData = activity?.channelData || {};
-    const teamId = channelData.team?.aadGroupId || channelData.team?.id || channelData.teamId;
-    const channelId = channelData.teamsChannelId || channelData.channel?.id || channelData.channelId;
+    const { teamId, channelId } = extractChannelIds(activity?.channelData);
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
     url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
   } else {
@@ -283,6 +289,7 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ reactionType }),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {

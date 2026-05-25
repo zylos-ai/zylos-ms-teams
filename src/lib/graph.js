@@ -40,6 +40,7 @@ export async function acquireTokenForScope(scope) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -74,6 +75,7 @@ export async function graphRequest(urlPath, options = {}) {
       'Content-Type': 'application/json',
       ...options.headers,
     },
+    signal: options.signal || AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {
@@ -136,6 +138,7 @@ export async function fetchChannelHistory(teamId, channelId, count = 10, threadM
     const url = `${GRAPH_BASE}${urlPath}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${delegatedToken}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
       const text = await res.text();
@@ -185,6 +188,7 @@ export async function downloadHostedContent(contentUrl, filename) {
         Authorization: `Bearer ${token}`,
         Accept: '*/*',
       },
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!res.ok) {
@@ -203,19 +207,4 @@ export async function downloadHostedContent(contentUrl, filename) {
   }
 }
 
-/**
- * Fetch members of a team.
- */
-export async function fetchTeamMembers(teamId) {
-  if (!isGraphEnabled()) return [];
-
-  const encoded = encodeURIComponent(teamId);
-  const data = await graphRequest(`/teams/${encoded}/members`);
-  return (data.value || []).map(m => ({
-    displayName: m.displayName || 'unknown',
-    userId: m.userId || '',
-    email: m.email || '',
-    roles: m.roles || [],
-  }));
-}
 

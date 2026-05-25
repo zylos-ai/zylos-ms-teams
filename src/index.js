@@ -25,7 +25,7 @@ import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/ht
 import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
-import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage } from './lib/format.js';
+import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
 import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getClientState } from './lib/channel-subscriptions.js';
 import { writeJsonAtomic } from './lib/atomic-write.js';
@@ -66,7 +66,7 @@ console.log(`[ms-teams] Data directory: ${DATA_DIR}`);
 const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
 let VOICE_ENABLED = false;
 try {
-  execFileSync(TRANSCRIBE_SCRIPT, ['--check'], { timeout: 15000 });
+  execFileSync(TRANSCRIBE_SCRIPT, ['--check'], { timeout: 5000 });
   VOICE_ENABLED = true;
 } catch {}
 console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (whisper or transcribe.py not found)'}`);
@@ -201,6 +201,7 @@ function startTyping(conversationId) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'typing', conversation: { id: baseId } }),
+        signal: AbortSignal.timeout(5000),
       });
     } catch {}
   };
@@ -468,11 +469,7 @@ async function handleMessage(ctx) {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
       if (reactUser) {
         if (convType === 'channel') {
-          const cd = activity?.channelData || {};
-          reactionContextCache.set(activityId, {
-            teamId: cd.team?.aadGroupId || cd.team?.id || cd.teamId,
-            channelId: cd.teamsChannelId || cd.channel?.id || cd.channelId,
-          });
+          reactionContextCache.set(activityId, extractChannelIds(activity?.channelData));
           persistReactionCache();
           setTimeout(() => { reactionContextCache.delete(activityId); persistReactionCache(); }, 10 * 60_000);
         }
@@ -502,9 +499,7 @@ async function handleMessage(ctx) {
       const threadRootId = activity.replyToId || conversationId.match(/;messageid=(\d+)/)?.[1];
       if (threadRootId) {
         try {
-          const cd = activity.channelData || {};
-          const teamId = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
-          const channelId = cd.teamsChannelId || cd.channel?.id || cd.channelId || '';
+          const { teamId, channelId } = extractChannelIds(activity.channelData);
           if (teamId && channelId) {
             const parentMsg = await fetchMessage(teamId, channelId, threadRootId);
             const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
@@ -530,9 +525,7 @@ async function handleMessage(ctx) {
 
     if (isGraphEnabled()) {
       try {
-        const cd = activity.channelData || {};
-        const teamId = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
-        const channelId = cd.teamsChannelId || cd.channel?.id || cd.channelId || '';
+        const { teamId, channelId } = extractChannelIds(activity.channelData);
         const threadMatch = conversationId.match(/;messageid=(\d+)/);
         const threadMessageId = threadMatch ? threadMatch[1] : '';
         const authUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
@@ -559,10 +552,10 @@ async function handleMessage(ctx) {
 
     const allAtts = activity.attachments || [];
     if (allAtts.length > 0) {
-      console.log(`[ms-teams] Attachments (${allAtts.length}): ${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: (a.contentUrl || '').substring(0, 120), name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 500) : JSON.stringify(a.content)?.substring(0, 500) })))}`);
+      console.debug(`[ms-teams] Attachments (${allAtts.length}): ${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, name: a.name })))}`);
     }
     if (smartNoMention) {
-      console.log(`[ms-teams] Smart-no-mention debug: text=${JSON.stringify((activity.text || '').substring(0, 200))}, attachments=${JSON.stringify(allAtts.map(a => ({ contentType: a.contentType, contentUrl: a.contentUrl, name: a.name, content: typeof a.content === 'string' ? a.content.substring(0, 300) : JSON.stringify(a.content)?.substring(0, 300) })))}, channelData=${JSON.stringify(activity.channelData || {})}`);
+      console.debug(`[ms-teams] Smart-no-mention: attachments=${allAtts.length}, hasText=${!!(activity.text || '').trim()}`);
     }
     const nonHtmlAtts = allAtts.filter(a => !(a.contentType || '').startsWith('text/html'));
     const hasVoiceAttachment = (() => {
@@ -611,9 +604,7 @@ async function handleMessage(ctx) {
       }
       let dlCmd;
       if (convType === 'channel') {
-        const cd = activity.channelData || {};
-        const tid = cd.team?.aadGroupId || cd.team?.id || cd.teamId || '';
-        const chid = cd.teamsChannelId || cd.channel?.id || cd.channelId || '';
+        const { teamId: tid, channelId: chid } = extractChannelIds(activity.channelData);
         dlCmd = activity.replyToId
           ? `channel ${tid} ${chid} ${activityId} ${activity.replyToId}`
           : `channel ${tid} ${chid} ${activityId}`;
@@ -878,6 +869,8 @@ function shutdown() {
   clearInterval(dedupCleanupInterval);
   stopRenewalLoop();
   stopWatching();
+  for (const interval of typingIntervals.values()) clearInterval(interval);
+  typingIntervals.clear();
 
   const finishExit = () => process.exit(0);
   httpServer.close(() => finishExit());
@@ -928,7 +921,7 @@ function validatePublicUrl(raw) {
       console.warn(`[ms-teams] MSTEAMS_PUBLIC_URL is not HTTPS (${parsed.protocol}), ignoring`);
       return null;
     }
-    return parsed.origin;
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
   } catch {
     console.warn(`[ms-teams] MSTEAMS_PUBLIC_URL is malformed, ignoring`);
     return null;
@@ -939,7 +932,7 @@ async function getPublicUrl() {
   const configured = validatePublicUrl(process.env.MSTEAMS_PUBLIC_URL);
   if (configured) return configured;
   try {
-    const res = await fetch('http://127.0.0.1:4040/api/tunnels');
+    const res = await fetch('http://127.0.0.1:4040/api/tunnels', { signal: AbortSignal.timeout(3000) });
     const data = await res.json();
     const tunnel = data.tunnels?.find(t => t.proto === 'https');
     if (tunnel) return tunnel.public_url;
