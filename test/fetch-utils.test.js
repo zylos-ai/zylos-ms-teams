@@ -70,10 +70,20 @@ describe('safeFetch', () => {
     ).rejects.toThrow('Redirect to disallowed host');
   });
 
-  it('rejects redirect to private IP via disallowed host', async () => {
+  it('rejects redirect to HTTP (non-HTTPS)', async () => {
     fetch.mockResolvedValue(new Response(null, {
       status: 302,
-      headers: { Location: 'http://192.168.1.1/internal' },
+      headers: { Location: 'http://graph.microsoft.com/resource' },
+    }));
+    await expect(
+      safeFetch('https://example.com/file', {}, { allowHosts: ALLOW_HOSTS })
+    ).rejects.toThrow('Redirect to non-HTTPS URL');
+  });
+
+  it('rejects redirect to private IP', async () => {
+    fetch.mockResolvedValue(new Response(null, {
+      status: 302,
+      headers: { Location: 'https://192.168.1.1/internal' },
     }));
     await expect(
       safeFetch('https://example.com/file', {}, { allowHosts: ALLOW_HOSTS })
@@ -107,7 +117,7 @@ describe('safeFetch', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
-  it('resolves relative redirect URLs', async () => {
+  it('resolves relative redirect URLs (same origin)', async () => {
     fetch
       .mockResolvedValueOnce(new Response(null, {
         status: 302,
@@ -127,7 +137,7 @@ describe('safeFetch', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it('passes headers through on redirects', async () => {
+  it('strips Authorization header on cross-origin redirect', async () => {
     fetch
       .mockResolvedValueOnce(new Response(null, {
         status: 302,
@@ -135,10 +145,35 @@ describe('safeFetch', () => {
       }))
       .mockResolvedValueOnce(new Response('ok', { status: 200 }));
     await safeFetch('https://example.com/file', {
+      headers: { Authorization: 'Bearer token123', 'Content-Type': 'application/json' },
+    }, { allowHosts: ALLOW_HOSTS });
+    const redirectCall = fetch.mock.calls[1][1];
+    expect(redirectCall.headers).not.toHaveProperty('Authorization');
+    expect(redirectCall.headers).not.toHaveProperty('authorization');
+    expect(redirectCall.headers['Content-Type']).toBe('application/json');
+  });
+
+  it('preserves Authorization header on same-origin redirect', async () => {
+    fetch
+      .mockResolvedValueOnce(new Response(null, {
+        status: 302,
+        headers: { Location: 'https://example.com/other' },
+      }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+    await safeFetch('https://example.com/file', {
       headers: { Authorization: 'Bearer token123' },
     }, { allowHosts: ALLOW_HOSTS });
-    expect(fetch.mock.calls[1][1]).toEqual(expect.objectContaining({
-      headers: { Authorization: 'Bearer token123' },
+    const redirectCall = fetch.mock.calls[1][1];
+    expect(redirectCall.headers.Authorization).toBe('Bearer token123');
+  });
+
+  it('rejects HTTP downgrade even for allowed host', async () => {
+    fetch.mockResolvedValue(new Response(null, {
+      status: 302,
+      headers: { Location: 'http://example.com/downgraded' },
     }));
+    await expect(
+      safeFetch('https://example.com/file', {}, { allowHosts: ALLOW_HOSTS })
+    ).rejects.toThrow('Redirect to non-HTTPS URL');
   });
 });

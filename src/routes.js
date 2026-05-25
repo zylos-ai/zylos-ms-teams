@@ -8,6 +8,15 @@ import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 
+function sanitizePrefix(raw) {
+  if (!raw) return '';
+  const prefix = raw.replace(/\/$/, '');
+  if (!prefix) return '';
+  if (!prefix.startsWith('/')) return '';
+  if (/\/\/|[?#%\\]|\.\.|\p{Cc}/u.test(prefix)) return '';
+  return prefix;
+}
+
 export function buildRedirectUri(req) {
   const publicUrl = process.env.MSTEAMS_PUBLIC_URL;
   if (publicUrl) {
@@ -23,7 +32,7 @@ export function buildRedirectUri(req) {
   }
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers['x-forwarded-host'] || req.headers['host'];
-  const prefix = (req.headers['x-forwarded-prefix'] || '').replace(/\/$/, '');
+  const prefix = sanitizePrefix(req.headers['x-forwarded-prefix']);
   return `${protocol}://${host}${prefix}/auth/callback`;
 }
 

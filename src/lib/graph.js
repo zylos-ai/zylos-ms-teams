@@ -206,5 +206,3 @@ export async function downloadHostedContent(contentUrl, filename) {
     return null;
   }
 }
-
-

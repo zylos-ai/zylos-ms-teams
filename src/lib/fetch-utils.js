@@ -7,6 +7,7 @@ export function timedFetch(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
 export async function safeFetch(url, options = {}, { allowHosts = [], timeoutMs = DEFAULT_TIMEOUT_MS, maxRedirects = MAX_REDIRECTS } = {}) {
   let current = url;
+  const requestOrigin = new URL(url).origin;
   for (let i = 0; i <= maxRedirects; i++) {
     const res = await fetch(current, {
       ...options,
@@ -20,11 +21,20 @@ export async function safeFetch(url, options = {}, { allowHosts = [], timeoutMs 
     const location = res.headers.get('location');
     if (!location) return res;
 
-    const resolved = new URL(location, current).href;
-    if (!isHostAllowed(resolved, allowHosts)) {
-      throw new Error(`Redirect to disallowed host: ${resolved}`);
+    const resolved = new URL(location, current);
+    if (resolved.protocol !== 'https:') {
+      throw new Error(`Redirect to non-HTTPS URL: ${resolved.href}`);
     }
-    current = resolved;
+    if (!isHostAllowed(resolved.href, allowHosts)) {
+      throw new Error(`Redirect to disallowed host: ${resolved.href}`);
+    }
+
+    current = resolved.href;
+
+    if (resolved.origin !== requestOrigin) {
+      const { Authorization, authorization, ...safeHeaders } = options.headers || {};
+      options = { ...options, headers: safeHeaders };
+    }
   }
   throw new Error(`Too many redirects (max ${maxRedirects})`);
 }
