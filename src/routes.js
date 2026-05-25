@@ -1,8 +1,10 @@
 import express from 'express';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 
 import { getConfig, getCredentials } from './lib/config.js';
+import { escapeHtml } from './lib/format.js';
 import { getConversationReference } from './lib/conversation-store.js';
 import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, validateState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
@@ -262,9 +264,17 @@ export function registerRoutes(expressApp, deps) {
       return res.status(400).json({ error: 'missing conversationId or filePath' });
     }
 
+    const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
     try {
-      if (!fs.existsSync(filePath)) {
+      let stat;
+      try {
+        stat = await fsp.stat(filePath);
+      } catch (statErr) {
         return res.status(404).json({ error: 'file not found' });
+      }
+
+      if (stat.size > MAX_MEDIA_BYTES) {
+        return res.status(413).json({ error: `file exceeds ${MAX_MEDIA_BYTES} byte limit` });
       }
 
       const reference = await getConversationReference(conversationId);
@@ -273,7 +283,7 @@ export function registerRoutes(expressApp, deps) {
       }
 
       if (mediaType === 'image') {
-        const imageData = fs.readFileSync(filePath);
+        const imageData = await fsp.readFile(filePath);
         const ext = path.extname(filePath).slice(1) || 'png';
         const base64 = imageData.toString('base64');
         const contentUrl = `data:image/${ext};base64,${base64}`;
@@ -325,7 +335,7 @@ export function registerRoutes(expressApp, deps) {
 
     if (error) {
       console.error(`[ms-teams/auth] OAuth error: ${error} — ${error_description}`);
-      return res.status(400).send(`Authentication failed: ${error_description || error}`);
+      return res.status(400).send(`Authentication failed: ${escapeHtml(error_description || error)}`);
     }
 
     if (!code || !state) {
@@ -340,7 +350,7 @@ export function registerRoutes(expressApp, deps) {
 
     try {
       const { aadObjectId, displayName } = await exchangeCode(code, state, redirectUri);
-      res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Signed in successfully</h2><p>${displayName}, your delegated auth is now active.</p><p>You can close this tab and return to Teams.</p></body></html>`);
+      res.send(`<html><body style="font-family:system-ui;text-align:center;padding:60px"><h2>Signed in successfully</h2><p>${escapeHtml(displayName)}, your delegated auth is now active.</p><p>You can close this tab and return to Teams.</p></body></html>`);
     } catch (err) {
       console.error(`[ms-teams/auth] Token exchange failed: ${err.message}`);
       res.status(500).send('Authentication failed. Please try again.');

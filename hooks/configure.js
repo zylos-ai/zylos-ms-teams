@@ -76,13 +76,24 @@ try {
 
   const config = readJsonFile(CONFIG_PATH, DEFAULT_CONFIG);
 
+  const credentialMap = {
+    MSTEAMS_APP_ID: 'appId',
+    MSTEAMS_APP_PASSWORD: 'appPassword',
+    MSTEAMS_TENANT_ID: 'tenantId',
+  };
+  if (!config.credentials) config.credentials = {};
+
   for (const [name, value] of Object.entries(collected)) {
     if (value === undefined || value === null || value === '') continue;
     appendEnvVar(name, value);
+    const configKey = credentialMap[name];
+    if (configKey) {
+      config.credentials[configKey] = value;
+    }
   }
 
   writeJsonFile(CONFIG_PATH, config);
-  console.log(`[configure] Credentials written to ${ENV_PATH}`);
+  console.log(`[configure] Credentials written to ${CONFIG_PATH} (with .env fallback)`);
   console.log(`[configure] Config written to ${CONFIG_PATH}`);
 } catch (err) {
   console.error(`[configure] ${err.message}`);

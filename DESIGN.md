@@ -1,7 +1,7 @@
 # zylos-ms-teams Design Document
 
-**Version**: v1.2.0
-**Date**: 2026-05-18
+**Version**: v0.1.4
+**Date**: 2026-05-25
 **Author**: Zylos Team
 **Repository**: https://github.com/zylos-ai/zylos-ms-teams
 **Status**: Released
@@ -68,7 +68,9 @@ zylos-ms-teams/
 
 ## 3. Configuration
 
-### 3.1 Environment Variables
+### 3.1 Credentials
+
+Credentials are stored in `config.json` under `credentials` (primary) with `.env` fallback. The `getCredentials()` function reads `config.credentials` first, then falls back to environment variables (`MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID`).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -110,6 +112,13 @@ Located at `~/zylos/components/ms-teams/config.json`:
 Caddy proxies:
 - `/ms-teams/api/messages` → `localhost:3978/api/messages` (Bot Framework webhook)
 - `/ms-teams/api/notifications` → `localhost:3978/api/notifications` (Graph subscription webhook for smart-mode channels)
+- `/ms-teams/auth/callback` → `localhost:3978/auth/callback` (OAuth2 delegated auth callback)
+- `/ms-teams/auth/sign-in` → `localhost:3978/auth/sign-in` (OAuth2 sign-in redirect)
+- `/ms-teams/health` → `localhost:3978/health` (Health check endpoint)
+- `/ms-teams/internal/send` → `localhost:3978/internal/send` (Internal send endpoint)
+- `/ms-teams/internal/stream` → `localhost:3978/internal/stream` (Internal stream endpoint)
+- `/ms-teams/internal/send-media` → `localhost:3978/internal/send-media` (Internal media send endpoint)
+- `/ms-teams/internal/react` → `localhost:3978/internal/react` (Internal reaction endpoint)
 
 ## 5. Security
 

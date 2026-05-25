@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { mergeConfigWithDefaults, resolveRouteConfig, isSmartConversation, DEFAULT_CONFIG } from '../src/lib/config.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mergeConfigWithDefaults, resolveRouteConfig, isSmartConversation, DEFAULT_CONFIG, getCredentials, loadConfig } from '../src/lib/config.js';
 
 describe('mergeConfigWithDefaults', () => {
   it('returns defaults when called with no args', () => {
@@ -163,5 +163,45 @@ describe('isSmartConversation', () => {
   it('handles missing channels/groups keys', () => {
     expect(isSmartConversation({}, 'channel', 'ch-1')).toBe(false);
     expect(isSmartConversation({}, 'group', 'grp-1')).toBe(false);
+  });
+});
+
+describe('getCredentials', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    delete process.env.MSTEAMS_APP_ID;
+    delete process.env.MSTEAMS_APP_PASSWORD;
+    delete process.env.MSTEAMS_TENANT_ID;
+  });
+
+  afterEach(() => {
+    process.env.MSTEAMS_APP_ID = originalEnv.MSTEAMS_APP_ID || '';
+    process.env.MSTEAMS_APP_PASSWORD = originalEnv.MSTEAMS_APP_PASSWORD || '';
+    process.env.MSTEAMS_TENANT_ID = originalEnv.MSTEAMS_TENANT_ID || '';
+  });
+
+  it('returns empty strings when no credentials are configured', () => {
+    const creds = getCredentials();
+    expect(creds.appId).toBe('');
+    expect(creds.appPassword).toBe('');
+    expect(creds.tenantId).toBe('');
+  });
+
+  it('falls back to environment variables', () => {
+    process.env.MSTEAMS_APP_ID = 'env-app-id';
+    process.env.MSTEAMS_APP_PASSWORD = 'env-secret';
+    process.env.MSTEAMS_TENANT_ID = 'env-tenant';
+    const creds = getCredentials();
+    expect(creds.appId).toBe('env-app-id');
+    expect(creds.appPassword).toBe('env-secret');
+    expect(creds.tenantId).toBe('env-tenant');
+  });
+
+  it('returns all three credential fields', () => {
+    const creds = getCredentials();
+    expect(creds).toHaveProperty('appId');
+    expect(creds).toHaveProperty('appPassword');
+    expect(creds).toHaveProperty('tenantId');
   });
 });

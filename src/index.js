@@ -965,7 +965,7 @@ async function initChannelSubscriptions() {
 
   try {
     await syncSubscriptions(channels, notificationUrl);
-    startRenewalLoop();
+    startRenewalLoop(notificationUrl);
     console.log(`[ms-teams/subs] Channel subscriptions active`);
   } catch (err) {
     console.error(`[ms-teams/subs] Failed to initialize subscriptions: ${err.message}`);

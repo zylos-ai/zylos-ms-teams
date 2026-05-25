@@ -7,14 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-25
+
 ### Added
 - Admin CLI: per-group allowFrom management — `add-group-allow`, `remove-group-allow`, `list-group-allow`
 - Admin CLI: per-channel allowFrom management — `add-channel-allow`, `remove-channel-allow`, `list-channel-allow`
 - Admin CLI: `add-group` now accepts optional `[mode]` parameter (mention|smart), matching Lark CLI
+- `escapeHtml` helper in format.js for HTML output contexts
+- Credential storage in config.json with .env fallback (`config.credentials`)
+- File size bound (25 MB) on send-media endpoint
 
 ### Changed
 - Groups auto-added by owner now include `mode: "mention"` by default (previously omitted, causing inconsistent metadata)
 - Standardized group config schema: all groups now have `name`, `mode`, `allowFrom`, `added_at` fields
+- `getCredentials()` reads from `config.json` first, falls back to environment variables
+- Configure hook writes credentials to both config.json and .env
+- Conversation-store load/save uses async file I/O (`fs/promises`)
+- Send-media endpoint uses async file read
+- DM reaction resolution uses `$orderby` for accurate chat matching
+- Subscription renewal loop passes `notificationUrl` for recreation on failure
+- Delegated auth token reload is mtime-aware
+- Admin CLI help text clarified
+
+### Fixed
+- XSS: HTML-escape `displayName` and `error_description` in OAuth callback pages
+- Subscription renewal: recreate subscription after failed renewal
+- OAuth state consumed before token exchange to prevent replay attacks
+
+### Removed
+- Dead `downloadHostedContent` function from graph.js
+- Dead `MSTEAMS_GRAPH_TOKEN` references from README.md and SKILL.md
 
 ## [0.1.2] - 2026-05-18
 

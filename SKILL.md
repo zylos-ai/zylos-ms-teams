@@ -1,6 +1,6 @@
 ---
 name: ms-teams
-version: 0.1.3
+version: 0.1.4
 description: >-
   Microsoft Teams communication channel.
   Use when: (1) replying to Teams messages (DM or group/channel @mentions),
@@ -47,9 +47,6 @@ config:
   optional:
     - name: MSTEAMS_TENANT_ID
       description: "Azure AD Tenant ID (for single-tenant bots)"
-    - name: MSTEAMS_GRAPH_TOKEN
-      description: "Graph API token (enables chat history fallback)"
-      sensitive: true
     - name: MSTEAMS_PUBLIC_URL
       description: "Canonical public HTTPS URL including base path (e.g. https://bot.example.com/ms-teams). Used for OAuth redirects and Graph subscriptions. Falls back to x-forwarded-* headers if not set."
 
@@ -189,9 +186,6 @@ MSTEAMS_APP_PASSWORD=your_app_password
 
 # Optional: for single-tenant bots
 MSTEAMS_TENANT_ID=your_tenant_id
-
-# Optional: enables Graph API for chat history fallback
-MSTEAMS_GRAPH_TOKEN=your_graph_token
 
 # Optional: canonical public URL for OAuth redirects and Graph subscriptions
 # Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage, extractChannelIds } from '../src/lib/format.js';
+import { escapeXml, escapeHtml, buildEndpoint, parseC4Response, getConversationType, formatMessage, extractChannelIds } from '../src/lib/format.js';
 
 describe('escapeXml', () => {
   it('escapes all XML special characters', () => {
@@ -17,6 +17,39 @@ describe('escapeXml', () => {
 
   it('passes through safe text unchanged', () => {
     expect(escapeXml('hello world')).toBe('hello world');
+  });
+});
+
+describe('escapeHtml', () => {
+  it('escapes all special characters', () => {
+    expect(escapeHtml('&<>"\'')).toBe('&amp;&lt;&gt;&quot;&#39;');
+  });
+
+  it('returns empty for null/undefined', () => {
+    expect(escapeHtml(null)).toBe('');
+    expect(escapeHtml(undefined)).toBe('');
+  });
+
+  it('prevents XSS in display names', () => {
+    const malicious = '<script>alert("xss")</script>';
+    const escaped = escapeHtml(malicious);
+    expect(escaped).not.toContain('<script>');
+    expect(escaped).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+  });
+
+  it('prevents XSS in error descriptions', () => {
+    const errorDesc = 'Error: <img src=x onerror="alert(1)">';
+    const escaped = escapeHtml(errorDesc);
+    expect(escaped).not.toContain('<img');
+    expect(escaped).toContain('&lt;img');
+  });
+
+  it('converts numbers to string', () => {
+    expect(escapeHtml(42)).toBe('42');
+  });
+
+  it('passes through safe text unchanged', () => {
+    expect(escapeHtml('hello world')).toBe('hello world');
   });
 });
 

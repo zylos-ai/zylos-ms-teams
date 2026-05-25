@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { getCredentials, DATA_DIR } from './config.js';
 import { htmlToText } from './html.js';
@@ -166,43 +165,4 @@ function formatGraphMessage(msg) {
   const attachments = (msg.attachments || []).map(a => a.name || a.contentType).filter(Boolean);
 
   return { from, body, time, id, attachments };
-}
-
-
-/**
- * Download hosted content (images/files) from a Teams message.
- * Returns the local file path, or null on failure.
- */
-export async function downloadHostedContent(contentUrl, filename) {
-  if (!isGraphEnabled()) return null;
-
-  try {
-    fs.mkdirSync(MEDIA_DIR, { recursive: true });
-
-    // Bot Framework service URLs need a bot-scoped token, not Graph
-    const isGraphUrl = contentUrl.includes('graph.microsoft.com');
-    const token = isGraphUrl ? await acquireToken() : await acquireBotToken();
-
-    const res = await fetch(contentUrl, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: '*/*',
-      },
-      signal: AbortSignal.timeout(60_000),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Download error (${res.status}): ${text}`);
-    }
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filePath = path.join(MEDIA_DIR, `${Date.now()}_${safeName}`);
-    fs.writeFileSync(filePath, buffer);
-    return filePath;
-  } catch (err) {
-    console.error(`[ms-teams/graph] Failed to download hosted content: ${err.message}`);
-    return null;
-  }
 }

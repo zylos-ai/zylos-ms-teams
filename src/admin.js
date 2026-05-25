@@ -513,9 +513,9 @@ Commands:
 
 Permission flow:
   Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom
-  Group chat:  groupPolicy -> groups config
-  Channel:     groupPolicy -> channels config -> posts (future)
-  Owner always bypasses all checks.
+  Group chat:  groupPolicy (disabled|allowlist|open) -> per-group allowFrom
+  Channel:     groupPolicy (disabled|allowlist|open) -> per-channel allowFrom
+  Owner always bypasses access control checks.
 
 After changes, restart: pm2 restart zylos-ms-teams
 `);

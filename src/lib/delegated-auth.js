@@ -12,11 +12,15 @@ const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send ChannelMessage.Read
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 let tokens = {};
+let tokensMtimeMs = 0;
 
 function loadTokens() {
   try {
     if (fs.existsSync(TOKENS_FILE)) {
+      const stat = fs.statSync(TOKENS_FILE);
+      if (stat.mtimeMs === tokensMtimeMs) return;
       tokens = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8'));
+      tokensMtimeMs = stat.mtimeMs;
     }
   } catch { tokens = {}; }
 }
@@ -24,6 +28,7 @@ function loadTokens() {
 function saveTokens() {
   try {
     writeJsonAtomic(TOKENS_FILE, tokens, 0o600);
+    try { tokensMtimeMs = fs.statSync(TOKENS_FILE).mtimeMs; } catch {}
   } catch (err) {
     console.error(`[ms-teams/delegated-auth] Failed to save tokens: ${err.message}`);
   }
@@ -33,12 +38,13 @@ loadTokens();
 
 const pendingStates = new Map();
 
-setInterval(() => {
+const stateCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 10 * 60_000;
   for (const [state, info] of pendingStates) {
     if (info.timestamp < cutoff) pendingStates.delete(state);
   }
 }, 5 * 60_000);
+stateCleanupTimer.unref();
 
 export function buildAuthUrl(redirectUri) {
   const creds = getCredentials();
@@ -65,6 +71,7 @@ export function validateState(state) {
 }
 
 export async function exchangeCode(code, state, redirectUri) {
+  pendingStates.delete(state);
   const creds = getCredentials();
   const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
 
@@ -103,7 +110,6 @@ export async function exchangeCode(code, state, redirectUri) {
     displayName,
   };
   saveTokens();
-  pendingStates.delete(state);
 
   console.log(`[ms-teams/delegated-auth] Authorized: ${displayName} (${aadObjectId})`);
   return { aadObjectId, displayName };
@@ -193,7 +199,7 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
   const token = await getDelegatedToken(aadObjectId);
   if (!token) return null;
 
-  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=chatType eq 'oneOnOne'&$top=10&$select=id,topic,chatType`, {
+  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=chatType eq 'oneOnOne'&$top=5&$select=id,topic,chatType&$orderby=lastMessagePreview/createdDateTime desc`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15_000),
   });
@@ -204,7 +210,7 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
   }
 
   const data = await res.json();
-  console.debug(`[ms-teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats`);
+  console.debug(`[ms-teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats, ordered by recency`);
   if (data.value?.length) {
     console.debug(`[ms-teams/delegated-auth] First chat ID: ${data.value[0].id}`);
   }
@@ -219,6 +225,7 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
     chatIdCache.set(conversationId, chat.id);
     return chat.id;
   }
+  console.warn(`[ms-teams/delegated-auth] No oneOnOne chats found for user ${aadObjectId}`);
   return null;
 }
 

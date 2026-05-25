@@ -215,9 +215,11 @@ export function stopWatching() {
 }
 
 export function getCredentials() {
+  const cfg = getConfig();
+  const creds = cfg.credentials || {};
   return {
-    appId: process.env.MSTEAMS_APP_ID || '',
-    appPassword: process.env.MSTEAMS_APP_PASSWORD || '',
-    tenantId: process.env.MSTEAMS_TENANT_ID || ''
+    appId: creds.appId || process.env.MSTEAMS_APP_ID || '',
+    appPassword: creds.appPassword || process.env.MSTEAMS_APP_PASSWORD || '',
+    tenantId: creds.tenantId || process.env.MSTEAMS_TENANT_ID || '',
   };
 }

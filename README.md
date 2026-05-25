@@ -61,9 +61,6 @@ MSTEAMS_APP_PASSWORD=your_microsoft_app_password
 # Optional: for single-tenant bots
 MSTEAMS_TENANT_ID=your_tenant_id
 
-# Optional: enables Graph API for chat history fallback
-MSTEAMS_GRAPH_TOKEN=your_graph_token
-
 # Optional: canonical public URL for OAuth redirects and Graph subscriptions
 # Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).
 # Falls back to header-based detection if not configured (less trusted).

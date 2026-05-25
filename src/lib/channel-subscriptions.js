@@ -170,7 +170,7 @@ export async function syncSubscriptions(channels, notificationUrl) {
   }
 }
 
-export async function renewAllSubscriptions() {
+export async function renewAllSubscriptions(notificationUrl) {
   const subs = loadSubscriptions();
   const now = Date.now();
 
@@ -184,16 +184,23 @@ export async function renewAllSubscriptions() {
         try {
           await deleteSubscription(entry.id);
         } catch {}
+        if (notificationUrl && entry.teamId) {
+          try {
+            await createSubscription(entry.teamId, chId, notificationUrl);
+          } catch (recreateErr) {
+            console.error(`[ms-teams/subs] Recreation failed for ${chId}: ${recreateErr.message}`);
+          }
+        }
       }
     }
   }
 }
 
-export function startRenewalLoop() {
+export function startRenewalLoop(notificationUrl) {
   if (renewalTimer) clearInterval(renewalTimer);
   renewalTimer = setInterval(async () => {
     try {
-      await renewAllSubscriptions();
+      await renewAllSubscriptions(notificationUrl);
     } catch (err) {
       console.error(`[ms-teams/subs] Renewal loop error: ${err.message}`);
     }

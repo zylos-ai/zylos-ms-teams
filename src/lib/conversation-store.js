@@ -8,6 +8,7 @@
  */
 
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 
 const HOME = process.env.HOME;
@@ -113,26 +114,26 @@ function pruneLRU(refs) {
 async function load() {
   await acquireLock();
   try {
-    if (fs.existsSync(STORE_PATH)) {
-      const content = fs.readFileSync(STORE_PATH, 'utf8');
-      references = JSON.parse(content);
+    const content = await fsp.readFile(STORE_PATH, 'utf8');
+    references = JSON.parse(content);
 
-      const now = Date.now();
-      for (const key of Object.keys(references)) {
-        const entry = references[key];
-        if (!entry.lastAccessed) {
-          entry.lastAccessed = entry.savedAt || now;
-        }
+    const now = Date.now();
+    for (const key of Object.keys(references)) {
+      const entry = references[key];
+      if (!entry.lastAccessed) {
+        entry.lastAccessed = entry.savedAt || now;
       }
+    }
 
-      pruneExpired(references);
-      pruneLRU(references);
+    pruneExpired(references);
+    pruneLRU(references);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      references = {};
     } else {
+      console.error(`[ms-teams/store] Failed to load conversation store: ${err.message}`);
       references = {};
     }
-  } catch (err) {
-    console.error(`[ms-teams/store] Failed to load conversation store: ${err.message}`);
-    references = {};
   } finally {
     releaseLock();
   }
@@ -146,13 +147,13 @@ async function save() {
   await acquireLock();
   const tmpPath = STORE_PATH + '.tmp';
   try {
-    fs.writeFileSync(tmpPath, JSON.stringify(references, null, 2));
-    fs.renameSync(tmpPath, STORE_PATH);
+    await fsp.writeFile(tmpPath, JSON.stringify(references, null, 2));
+    await fsp.rename(tmpPath, STORE_PATH);
     return true;
   } catch (err) {
     console.error(`[ms-teams/store] Failed to save conversation store: ${err.message}`);
     try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      await fsp.unlink(tmpPath);
     } catch {}
     return false;
   } finally {
