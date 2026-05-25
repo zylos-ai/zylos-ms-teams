@@ -125,7 +125,7 @@ Internal endpoints (localhost-only, protected by internal token — not exposed 
 ## 5. Security
 
 - **JWT validation**: All inbound activities verified against Bot Framework OpenID metadata
-- **Owner binding**: First DM sender auto-bound as owner; owner bypasses all ACL
+- **Owner binding**: First DM sender auto-bound as owner; owner bypasses all ACL (except `groupPolicy: disabled`, which blocks all group messages including from owner)
 - **DM policy**: `owner` (default), `allowlist`, or `open`
 - **Group policy**: `allowlist` (default), `open`, or `disabled`
 - **Token caching**: Per-scope Map with 60s expiry margin

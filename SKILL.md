@@ -175,23 +175,26 @@ After changes, restart: `pm2 restart zylos-ms-teams`
 - Reaction cache: `~/zylos/components/ms-teams/reaction-cache.json`
 - Channel subscriptions: `~/zylos/components/ms-teams/channel-subscriptions.json`
 
-## Environment Variables
+## Credentials
 
-Required in `~/zylos/.env`:
+Credentials are stored in component `config.json` (under `credentials` and `publicUrl`). Run `zylos configure ms-teams` to set them interactively, or edit `config.json` directly:
 
-```bash
-# Azure Bot Registration (required)
-MSTEAMS_APP_ID=your_app_id
-MSTEAMS_APP_PASSWORD=your_app_password
-
-# Optional: for single-tenant bots
-MSTEAMS_TENANT_ID=your_tenant_id
-
-# Optional: canonical public URL for OAuth redirects and Graph subscriptions
-# Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).
-# Falls back to x-forwarded-* headers if not set (less trusted).
-MSTEAMS_PUBLIC_URL=https://bot.example.com/ms-teams
+```json
+{
+  "credentials": {
+    "appId": "your_app_id",
+    "appPassword": "your_app_password",
+    "tenantId": "your_tenant_id"
+  },
+  "publicUrl": "https://bot.example.com/ms-teams"
+}
 ```
+
+- `appId` and `appPassword` — Azure Bot Registration (required)
+- `tenantId` — Azure AD tenant (optional, for single-tenant bots and Graph API)
+- `publicUrl` — Canonical HTTPS URL including base path (optional, for OAuth redirects and Graph subscriptions; falls back to `x-forwarded-*` headers)
+
+> **Legacy fallback:** values from `~/zylos/.env` (`MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID`, `MSTEAMS_PUBLIC_URL`) are still read if not present in config.json.
 
 ## Owner
 

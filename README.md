@@ -143,6 +143,10 @@ $ADM list-channel-allow <chId>                    # Show per-channel allowFrom l
 $ADM auth-status                                  # Show delegated auth users
 $ADM auth-url <base-url>                          # Generate sign-in URL
 $ADM auth-revoke <aad_object_id>                  # Revoke delegated auth
+
+# Graph API
+$ADM graph-status                                 # Show Graph API configuration
+$ADM set-teams-app-catalog-id <id>                # Set catalog ID (enables DM reactions)
 ```
 
 ## Access Control
@@ -174,7 +178,7 @@ Groups and channels can operate in two modes:
 - **mention** (default) — Bot only responds to @mentions
 - **smart** — Bot receives all messages; agent decides whether to respond
 
-Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every 10 min) to receive messages without @mention. A 💬 reaction is set on incoming messages as a processing indicator and removed after the reply is sent.
+Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every 10 min) to receive messages without @mention. A 💬 reaction is set on incoming messages as a processing indicator and removed after the reply is sent. DM reactions require `teamsAppCatalogId` to be configured (see `set-teams-app-catalog-id` in admin CLI); without it, DM reactions are silently disabled while group/channel reactions work normally.
 
 In smart mode without @mention:
 - Attachments are fetched on-demand via `download-attachments.js`

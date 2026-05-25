@@ -108,9 +108,9 @@ if (!config.enabled) {
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
-  console.error('[ms-teams] WARNING: MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not set in ~/zylos/.env');
+  console.error('[ms-teams] WARNING: credentials not configured (appId and/or appPassword missing)');
   console.error('[ms-teams] The bot will start but cannot authenticate with Teams.');
-  console.error('[ms-teams] Set credentials and restart: pm2 restart zylos-ms-teams');
+  console.error('[ms-teams] Run "zylos configure ms-teams" or set credentials in config.json, then restart.');
 }
 
 // Bot identity

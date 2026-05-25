@@ -319,3 +319,5 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
   }
   console.log(`[ms-teams/delegated-auth] Reaction '${reactionType}' removed from ${messageId}`);
 }
+
+export { resolveGraphChatId as _resolveGraphChatId, chatIdCache as _chatIdCache };
