@@ -13,7 +13,7 @@ function sanitizePrefix(raw) {
   const prefix = raw.replace(/\/$/, '');
   if (!prefix) return '';
   if (!prefix.startsWith('/')) return '';
-  if (/\/\/|[?#%\\]|\.\.|\p{Cc}/u.test(prefix)) return '';
+  if (/\/\/|[?#%\\]|\.\.|\p{Cc}|\s|[<>"'`&]/u.test(prefix)) return '';
   return prefix;
 }
 

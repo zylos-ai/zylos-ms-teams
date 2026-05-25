@@ -65,9 +65,9 @@ MSTEAMS_TENANT_ID=your_tenant_id
 MSTEAMS_GRAPH_TOKEN=your_graph_token
 
 # Optional: canonical public URL for OAuth redirects and Graph subscriptions
-# Must be HTTPS. When set, used instead of x-forwarded-* headers for redirect URIs.
+# Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).
 # Falls back to header-based detection if not configured (less trusted).
-MSTEAMS_PUBLIC_URL=https://bot.example.com
+MSTEAMS_PUBLIC_URL=https://bot.example.com/ms-teams
 ```
 
 Get credentials from your Azure Bot Registration:

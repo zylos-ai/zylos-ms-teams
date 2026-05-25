@@ -28,7 +28,7 @@ describe('buildRedirectUri', () => {
     expect(uri).toBe('https://felix-lin.coco.site/ms-teams/auth/callback');
   });
 
-  it('works when MSTEAMS_PUBLIC_URL has no path', () => {
+  it('works when MSTEAMS_PUBLIC_URL has no path (origin-only)', () => {
     process.env.MSTEAMS_PUBLIC_URL = 'https://felix-lin.coco.site';
     const uri = buildRedirectUri(mockReq());
     expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
@@ -144,6 +144,53 @@ describe('buildRedirectUri', () => {
       'x-forwarded-proto': 'https',
       'x-forwarded-host': 'felix-lin.coco.site',
       'x-forwarded-prefix': '/ms-teams\r\nInjected: header',
+    }));
+    expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
+  });
+
+  it('rejects prefix with spaces', () => {
+    const uri = buildRedirectUri(mockReq({
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'felix-lin.coco.site',
+      'x-forwarded-prefix': '/ms teams',
+    }));
+    expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
+  });
+
+  it('rejects prefix with angle brackets', () => {
+    const uri = buildRedirectUri(mockReq({
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'felix-lin.coco.site',
+      'x-forwarded-prefix': '/ms-teams<svg>',
+    }));
+    expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
+  });
+
+  it('rejects prefix with ampersand', () => {
+    const uri = buildRedirectUri(mockReq({
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'felix-lin.coco.site',
+      'x-forwarded-prefix': '/ms-teams&x',
+    }));
+    expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
+  });
+
+  it('rejects prefix with quotes', () => {
+    for (const q of ['"', "'", '`']) {
+      const uri = buildRedirectUri(mockReq({
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'felix-lin.coco.site',
+        'x-forwarded-prefix': `/ms-teams${q}onclick`,
+      }));
+      expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
+    }
+  });
+
+  it('rejects prefix with tab character', () => {
+    const uri = buildRedirectUri(mockReq({
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': 'felix-lin.coco.site',
+      'x-forwarded-prefix': '/ms-teams\there',
     }));
     expect(uri).toBe('https://felix-lin.coco.site/auth/callback');
   });

@@ -51,7 +51,7 @@ config:
       description: "Graph API token (enables chat history fallback)"
       sensitive: true
     - name: MSTEAMS_PUBLIC_URL
-      description: "Canonical public HTTPS URL for OAuth redirects and Graph subscriptions. Falls back to x-forwarded-* headers if not set."
+      description: "Canonical public HTTPS URL including base path (e.g. https://bot.example.com/ms-teams). Used for OAuth redirects and Graph subscriptions. Falls back to x-forwarded-* headers if not set."
 
 next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/ms-teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
 
@@ -194,8 +194,9 @@ MSTEAMS_TENANT_ID=your_tenant_id
 MSTEAMS_GRAPH_TOKEN=your_graph_token
 
 # Optional: canonical public URL for OAuth redirects and Graph subscriptions
-# Must be HTTPS. Falls back to x-forwarded-* headers if not set (less trusted).
-MSTEAMS_PUBLIC_URL=https://bot.example.com
+# Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).
+# Falls back to x-forwarded-* headers if not set (less trusted).
+MSTEAMS_PUBLIC_URL=https://bot.example.com/ms-teams
 ```
 
 ## Owner
