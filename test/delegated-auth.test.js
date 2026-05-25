@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let mockCatalogId = '';
-let mockTokens = {};
 
 vi.mock('../src/lib/config.js', () => ({
   getCredentials: () => ({
@@ -17,7 +16,17 @@ vi.mock('../src/lib/atomic-write.js', () => ({
   writeJsonAtomic: vi.fn(),
 }));
 
-const { buildAuthUrl, consumeState, _resolveGraphChatId, _chatIdCache } = await import('../src/lib/delegated-auth.js');
+const { buildAuthUrl, consumeState, _resolveGraphChatId, _chatIdCache, _setTokensForTest } = await import('../src/lib/delegated-auth.js');
+
+function injectToken(aadObjectId = 'test-user') {
+  _setTokensForTest({
+    [aadObjectId]: {
+      accessToken: 'test-graph-token',
+      expiresAt: Date.now() + 3600_000,
+      displayName: 'Test User',
+    },
+  });
+}
 
 describe('consumeState', () => {
   it('returns stored state data and deletes it atomically', () => {
@@ -57,11 +66,13 @@ describe('resolveGraphChatId', () => {
   beforeEach(() => {
     mockCatalogId = '';
     _chatIdCache.clear();
+    _setTokensForTest({});
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
     mockCatalogId = '';
+    _setTokensForTest({});
   });
 
   it('returns null when teamsAppCatalogId is not configured', async () => {
@@ -70,60 +81,60 @@ describe('resolveGraphChatId', () => {
     expect(result).toBeNull();
   });
 
-  it('returns the chat ID when exactly one oneOnOne match is found', async () => {
+  it('returns null when no delegated token exists', async () => {
     mockCatalogId = 'catalog-id-123';
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        value: [
-          { id: '19:correct-chat@unq.gbl.spaces', chatType: 'oneOnOne' },
-        ],
-      }),
-    }));
-
-    // getDelegatedToken requires a stored token — mock it through the tokens object
-    // Since we can't easily set internal state, we test via the exported function
-    // which checks getDelegatedToken first. With no token, it returns null.
-    // To test the Graph path, we need a token — import and set directly.
-
-    // Alternative: test the path after token check by verifying null when no token
     const result = await _resolveGraphChatId('no-token-user', 'a:conv123');
-    // No delegated token → returns null before reaching Graph
     expect(result).toBeNull();
   });
 
-  it('returns cached result on second call for same conversationId', async () => {
+  it('returns cached result without calling Graph', async () => {
     mockCatalogId = 'catalog-id-123';
+    injectToken();
     const chatId = '19:cached-chat@unq.gbl.spaces';
     _chatIdCache.set('a:conv-cached', chatId);
 
-    const result = await _resolveGraphChatId('any-user', 'a:conv-cached');
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const result = await _resolveGraphChatId('test-user', 'a:conv-cached');
     expect(result).toBe(chatId);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('returns null when zero oneOnOne chats match (zero-match)', async () => {
+  it('returns chat ID when exactly one oneOnOne match and caches it', async () => {
     mockCatalogId = 'catalog-id-123';
-    _chatIdCache.clear();
+    injectToken();
 
-    // Simulate: Graph returns chats but none are oneOnOne
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        value: [
-          { id: '19:group-chat@thread.v2', chatType: 'group' },
-        ],
+        value: [{ id: '19:correct-chat@unq.gbl.spaces', chatType: 'oneOnOne' }],
       }),
     }));
 
-    // Still needs a token — without one, returns null at token check
-    const result = await _resolveGraphChatId('no-token-user', 'a:conv-zero');
+    const result = await _resolveGraphChatId('test-user', 'a:conv-single');
+    expect(result).toBe('19:correct-chat@unq.gbl.spaces');
+    expect(_chatIdCache.get('a:conv-single')).toBe('19:correct-chat@unq.gbl.spaces');
+  });
+
+  it('returns null when zero oneOnOne chats match', async () => {
+    mockCatalogId = 'catalog-id-123';
+    injectToken();
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        value: [{ id: '19:group-chat@thread.v2', chatType: 'group' }],
+      }),
+    }));
+
+    const result = await _resolveGraphChatId('test-user', 'a:conv-zero');
     expect(result).toBeNull();
   });
 
   it('returns null when multiple oneOnOne chats match (ambiguous)', async () => {
     mockCatalogId = 'catalog-id-123';
-    _chatIdCache.clear();
+    injectToken();
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -135,13 +146,13 @@ describe('resolveGraphChatId', () => {
       }),
     }));
 
-    const result = await _resolveGraphChatId('no-token-user', 'a:conv-ambig');
+    const result = await _resolveGraphChatId('test-user', 'a:conv-ambig');
     expect(result).toBeNull();
   });
 
-  it('uses correct Graph filter URL with catalog ID', async () => {
+  it('sends correct Graph URL with encoded catalog filter and $select', async () => {
     mockCatalogId = 'my-catalog-id';
-    _chatIdCache.clear();
+    injectToken();
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -149,49 +160,50 @@ describe('resolveGraphChatId', () => {
     });
     vi.stubGlobal('fetch', mockFetch);
 
-    // Will return null at token check, but we verify the function doesn't throw
-    // and returns null gracefully
-    const result = await _resolveGraphChatId('no-token-user', 'a:conv-filter');
-    expect(result).toBeNull();
-    // fetch is not called because getDelegatedToken returns null first
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-});
+    await _resolveGraphChatId('test-user', 'a:conv-filter');
 
-describe('resolveGraphChatId with mocked token', () => {
-  beforeEach(() => {
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toContain('https://graph.microsoft.com/v1.0/me/chats');
+    expect(url).toContain(encodeURIComponent("installedApps/any(a:a/teamsApp/id eq 'my-catalog-id')"));
+    expect(url).toContain('$select=id,chatType');
+    expect(opts.headers.Authorization).toBe('Bearer test-graph-token');
+  });
+
+  it('evicts oldest cache entry at capacity via resolveGraphChatId', async () => {
     mockCatalogId = 'catalog-id-test';
-    _chatIdCache.clear();
-  });
+    injectToken();
 
-  afterEach(() => {
-    mockCatalogId = '';
-    vi.restoreAllMocks();
-  });
-
-  it('filters by installedApps and accepts exactly one oneOnOne', async () => {
-    // We can't easily inject a token into the module's internal state,
-    // but we CAN test via the cache path which bypasses token check entirely
-    const expectedChatId = '19:deterministic@unq.gbl.spaces';
-    _chatIdCache.set('a:dm-conv', expectedChatId);
-
-    const result = await _resolveGraphChatId('any-user', 'a:dm-conv');
-    expect(result).toBe(expectedChatId);
-  });
-
-  it('cache evicts oldest entry when at capacity', () => {
-    mockCatalogId = 'catalog-id-test';
-    // Fill cache to capacity
     for (let i = 0; i < 200; i++) {
       _chatIdCache.set(`conv-${i}`, `chat-${i}`);
     }
     expect(_chatIdCache.size).toBe(200);
 
-    // Adding one more should evict the oldest (conv-0)
-    _chatIdCache.set('conv-new', 'chat-new');
-    // Map preserves insertion order, so conv-0 would be evicted by the production code
-    // but direct Map.set doesn't auto-evict — the eviction happens in resolveGraphChatId
-    // This test verifies cache structure; eviction is tested via the function path
-    expect(_chatIdCache.has('conv-new')).toBe(true);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        value: [{ id: '19:new-chat@unq.gbl.spaces', chatType: 'oneOnOne' }],
+      }),
+    }));
+
+    const result = await _resolveGraphChatId('test-user', 'a:conv-new-evict');
+    expect(result).toBe('19:new-chat@unq.gbl.spaces');
+    expect(_chatIdCache.size).toBe(200);
+    expect(_chatIdCache.has('conv-0')).toBe(false);
+    expect(_chatIdCache.has('a:conv-new-evict')).toBe(true);
+  });
+
+  it('returns null when Graph API returns an error', async () => {
+    mockCatalogId = 'catalog-id-123';
+    injectToken();
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => 'Forbidden',
+    }));
+
+    const result = await _resolveGraphChatId('test-user', 'a:conv-error');
+    expect(result).toBeNull();
   });
 });
