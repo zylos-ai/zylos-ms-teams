@@ -48,10 +48,6 @@ function parseEndpoint(endpoint) {
 
 const parsedEndpoint = parseEndpoint(rawEndpoint);
 
-if (message.trim() === '[SKIP]') {
-  process.exit(0);
-}
-
 const config = getConfig();
 if (!config.enabled) {
   console.error('Error: ms-teams is disabled in config');
@@ -282,4 +278,9 @@ async function send() {
   }
 }
 
-send();
+if (message.trim() === '[SKIP]') {
+  removeThinkingReaction().catch(() => {}).finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000);
+} else {
+  send();
+}

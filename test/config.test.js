@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mergeConfigWithDefaults, resolveRouteConfig, isSmartConversation, DEFAULT_CONFIG, getCredentials, loadConfig } from '../src/lib/config.js';
+import { mergeConfigWithDefaults, resolveRouteConfig, isSmartConversation, DEFAULT_CONFIG, getCredentials, getPublicUrl, getTeamsAppCatalogId, loadConfig } from '../src/lib/config.js';
 
 describe('mergeConfigWithDefaults', () => {
   it('returns defaults when called with no args', () => {
@@ -203,5 +203,36 @@ describe('getCredentials', () => {
     expect(creds).toHaveProperty('appId');
     expect(creds).toHaveProperty('appPassword');
     expect(creds).toHaveProperty('tenantId');
+  });
+});
+
+describe('getPublicUrl', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    if (originalEnv.MSTEAMS_PUBLIC_URL) {
+      process.env.MSTEAMS_PUBLIC_URL = originalEnv.MSTEAMS_PUBLIC_URL;
+    } else {
+      delete process.env.MSTEAMS_PUBLIC_URL;
+    }
+  });
+
+  it('returns empty string when nothing is configured', () => {
+    delete process.env.MSTEAMS_PUBLIC_URL;
+    const url = getPublicUrl();
+    expect(url).toBe('');
+  });
+
+  it('falls back to environment variable', () => {
+    process.env.MSTEAMS_PUBLIC_URL = 'https://example.com/ms-teams';
+    const url = getPublicUrl();
+    expect(url).toBe('https://example.com/ms-teams');
+  });
+});
+
+describe('getTeamsAppCatalogId', () => {
+  it('returns empty string when not configured', () => {
+    const id = getTeamsAppCatalogId();
+    expect(id).toBe('');
   });
 });

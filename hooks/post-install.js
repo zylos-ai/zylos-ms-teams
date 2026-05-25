@@ -13,7 +13,6 @@ import path from 'node:path';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
-const ENV_FILE = path.join(HOME, 'zylos/.env');
 
 const INITIAL_CONFIG = {
   enabled: true,
@@ -43,18 +42,23 @@ if (!fs.existsSync(configPath)) {
   console.log('\nConfig already exists, skipping.');
 }
 
-// 3. Check environment variables
-console.log('\nChecking environment variables...');
-let envContent = '';
+// 3. Check credentials in config
+console.log('\nChecking credentials...');
+let hasCredentials = false;
 try {
-  envContent = fs.readFileSync(ENV_FILE, 'utf8');
-} catch (e) {}
+  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  hasCredentials = !!(cfg.credentials?.appId && cfg.credentials?.appPassword);
+} catch {}
 
-const hasAppId = envContent.includes('MSTEAMS_APP_ID');
-const hasAppPassword = envContent.includes('MSTEAMS_APP_PASSWORD');
+if (!hasCredentials) {
+  // Fallback: check legacy .env
+  let envContent = '';
+  try { envContent = fs.readFileSync(path.join(HOME, 'zylos/.env'), 'utf8'); } catch {}
+  hasCredentials = envContent.includes('MSTEAMS_APP_ID') && envContent.includes('MSTEAMS_APP_PASSWORD');
+}
 
-if (!hasAppId || !hasAppPassword) {
-  console.log('  MSTEAMS_APP_ID and/or MSTEAMS_APP_PASSWORD not yet in .env.');
+if (!hasCredentials) {
+  console.log('  Credentials not yet configured. Run the configure hook or use the admin CLI.');
 } else {
   console.log('  Credentials found.');
 }
@@ -68,9 +72,9 @@ console.log('');
 console.log('1. Create an Azure Bot Registration:');
 console.log('   https://portal.azure.com -> Bot Services -> Create');
 console.log('');
-console.log('2. Add credentials to ~/zylos/.env:');
-console.log('   MSTEAMS_APP_ID=your_app_id');
-console.log('   MSTEAMS_APP_PASSWORD=your_app_password');
+console.log('2. Run the configure hook to set credentials:');
+console.log('   zylos configure ms-teams');
+console.log('   (stores credentials in config.json — legacy .env values are also read as fallback)');
 console.log('');
 
 let webhookUrl = 'https://<your-domain>/ms-teams/api/messages';

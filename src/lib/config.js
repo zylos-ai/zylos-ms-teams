@@ -223,3 +223,13 @@ export function getCredentials() {
     tenantId: creds.tenantId || process.env.MSTEAMS_TENANT_ID || '',
   };
 }
+
+export function getPublicUrl() {
+  const cfg = getConfig();
+  return cfg.publicUrl || process.env.MSTEAMS_PUBLIC_URL || '';
+}
+
+export function getTeamsAppCatalogId() {
+  const cfg = getConfig();
+  return cfg.teamsAppCatalogId || '';
+}

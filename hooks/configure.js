@@ -15,8 +15,6 @@ import path from 'node:path';
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-const ENV_PATH = path.join(HOME, 'zylos/.env');
-const COMPONENT_PREFIX = 'MSTEAMS_';
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -51,18 +49,6 @@ function writeJsonFile(filePath, value) {
   fs.renameSync(tmpPath, filePath);
 }
 
-function appendEnvVar(name, value) {
-  let content = '';
-  try { content = fs.readFileSync(ENV_PATH, 'utf8'); } catch {}
-  const re = new RegExp(`^${name}=.*$`, 'm');
-  if (re.test(content)) {
-    content = content.replace(re, `${name}=${value}`);
-  } else {
-    content = content.trimEnd() + `\n${name}=${value}\n`;
-  }
-  fs.writeFileSync(ENV_PATH, content);
-}
-
 try {
   const raw = (await readStdin()).trim();
   if (!raw) {
@@ -85,15 +71,15 @@ try {
 
   for (const [name, value] of Object.entries(collected)) {
     if (value === undefined || value === null || value === '') continue;
-    appendEnvVar(name, value);
     const configKey = credentialMap[name];
     if (configKey) {
       config.credentials[configKey] = value;
+    } else if (name === 'MSTEAMS_PUBLIC_URL') {
+      config.publicUrl = value;
     }
   }
 
   writeJsonFile(CONFIG_PATH, config);
-  console.log(`[configure] Credentials written to ${CONFIG_PATH} (with .env fallback)`);
   console.log(`[configure] Config written to ${CONFIG_PATH}`);
 } catch (err) {
   console.error(`[configure] ${err.message}`);

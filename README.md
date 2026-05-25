@@ -51,21 +51,15 @@ Zylos will guide you through the setup, including obtaining Azure Bot Registrati
 
 ### Credentials
 
-Add to `~/zylos/.env`:
+Run the configure hook to set credentials (stored in `config.json`):
 
 ```bash
-# Azure Bot Registration (required)
-MSTEAMS_APP_ID=your_microsoft_app_id
-MSTEAMS_APP_PASSWORD=your_microsoft_app_password
-
-# Optional: for single-tenant bots
-MSTEAMS_TENANT_ID=your_tenant_id
-
-# Optional: canonical public URL for OAuth redirects and Graph subscriptions
-# Must be HTTPS. Include the base path if behind a reverse proxy (e.g. /ms-teams).
-# Falls back to header-based detection if not configured (less trusted).
-MSTEAMS_PUBLIC_URL=https://bot.example.com/ms-teams
+zylos configure ms-teams
 ```
+
+This prompts for `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and optionally `MSTEAMS_TENANT_ID` and `MSTEAMS_PUBLIC_URL`, and stores them in the component config.
+
+> **Legacy fallback:** existing `~/zylos/.env` values are still read if not present in config.json.
 
 Get credentials from your Azure Bot Registration:
 - Azure Portal: [portal.azure.com](https://portal.azure.com) -> Bot Services

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getCredentials, DATA_DIR } from './config.js';
+import { getCredentials, getTeamsAppCatalogId, DATA_DIR } from './config.js';
 import { writeJsonAtomic } from './atomic-write.js';
 import { extractChannelIds } from './format.js';
 
@@ -66,12 +66,14 @@ export function buildAuthUrl(redirectUri) {
   return { url: `${url}?${params}`, state };
 }
 
-export function validateState(state) {
-  return pendingStates.has(state);
+export function consumeState(state) {
+  const data = pendingStates.get(state);
+  if (!data) return null;
+  pendingStates.delete(state);
+  return data;
 }
 
-export async function exchangeCode(code, state, redirectUri) {
-  pendingStates.delete(state);
+export async function exchangeCode(code, redirectUri) {
   const creds = getCredentials();
   const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
 
@@ -194,12 +196,19 @@ const chatIdCache = new Map();
 const CHAT_ID_CACHE_MAX = 200;
 
 async function resolveGraphChatId(aadObjectId, conversationId) {
+  const catalogId = getTeamsAppCatalogId();
+  if (!catalogId) {
+    console.debug('[ms-teams/delegated-auth] DM chat resolution skipped: teamsAppCatalogId not configured');
+    return null;
+  }
+
   if (chatIdCache.has(conversationId)) return chatIdCache.get(conversationId);
 
   const token = await getDelegatedToken(aadObjectId);
   if (!token) return null;
 
-  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=chatType eq 'oneOnOne'&$top=5&$select=id,topic,chatType&$orderby=lastMessagePreview/createdDateTime desc`, {
+  const filter = encodeURIComponent(`installedApps/any(a:a/teamsApp/id eq '${catalogId}')`);
+  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=${filter}&$select=id,chatType`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15_000),
   });
@@ -210,46 +219,61 @@ async function resolveGraphChatId(aadObjectId, conversationId) {
   }
 
   const data = await res.json();
-  console.debug(`[ms-teams/delegated-auth] Chat lookup returned ${data.value?.length || 0} chats, ordered by recency`);
-  if (data.value?.length) {
-    console.debug(`[ms-teams/delegated-auth] First chat ID: ${data.value[0].id}`);
+  const oneOnOneChats = (data.value || []).filter(c => c.chatType === 'oneOnOne');
+  console.debug(`[ms-teams/delegated-auth] Installed-app filter returned ${data.value?.length || 0} chats, ${oneOnOneChats.length} oneOnOne`);
+
+  if (oneOnOneChats.length !== 1) {
+    if (oneOnOneChats.length === 0) {
+      console.debug('[ms-teams/delegated-auth] No oneOnOne chats found with installed app');
+    } else {
+      console.debug(`[ms-teams/delegated-auth] Ambiguous: ${oneOnOneChats.length} oneOnOne chats found, skipping DM reaction`);
+    }
+    return null;
   }
 
-  // Use the most recently active oneOnOne chat (caller invokes this right after receiving a message)
-  const chat = data.value?.[0];
-  if (chat) {
-    if (chatIdCache.size >= CHAT_ID_CACHE_MAX) {
-      const oldest = chatIdCache.keys().next().value;
-      chatIdCache.delete(oldest);
-    }
-    chatIdCache.set(conversationId, chat.id);
-    return chat.id;
+  const chat = oneOnOneChats[0];
+  if (chatIdCache.size >= CHAT_ID_CACHE_MAX) {
+    const oldest = chatIdCache.keys().next().value;
+    chatIdCache.delete(oldest);
   }
-  console.warn(`[ms-teams/delegated-auth] No oneOnOne chats found for user ${aadObjectId}`);
-  return null;
+  chatIdCache.set(conversationId, chat.id);
+  return chat.id;
 }
 
 // ── Reaction API ──
+
+async function resolveReactionUrl(aadObjectId, conversationType, conversationId, messageId, action, activity) {
+  const verb = action === 'remove' ? 'unsetReaction' : 'setReaction';
+
+  if (conversationType === 'channel') {
+    const { teamId, channelId } = extractChannelIds(activity?.channelData);
+    if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
+    return `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/${verb}`;
+  }
+
+  let graphChatId;
+  if (conversationType === 'group') {
+    graphChatId = conversationId;
+  } else {
+    graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+    if (!graphChatId) return null;
+  }
+  return `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/${verb}`;
+}
 
 export async function sendReaction({ aadObjectId, conversationType, conversationId, messageId, reactionType, activity }) {
   const token = await getDelegatedToken(aadObjectId);
   if (!token) throw new Error(`No delegated auth for user ${aadObjectId}`);
 
-  let url;
+  const url = await resolveReactionUrl(aadObjectId, conversationType, conversationId, messageId, 'set', activity);
+  if (!url) {
+    console.debug(`[ms-teams/delegated-auth] DM reaction skipped: no reliable chat mapping for ${conversationId}`);
+    return;
+  }
+
   if (conversationType === 'channel') {
     const { teamId, channelId } = extractChannelIds(activity?.channelData);
     console.debug(`[ms-teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
-    if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
-    url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
-  } else {
-    let graphChatId;
-    if (conversationType === 'group') {
-      graphChatId = conversationId;
-    } else {
-      graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
-      if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
-    }
-    url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/setReaction`;
   }
 
   const res = await fetch(url, {
@@ -273,20 +297,10 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
   const token = await getDelegatedToken(aadObjectId);
   if (!token) throw new Error(`No delegated auth for user ${aadObjectId}`);
 
-  let url;
-  if (conversationType === 'channel') {
-    const { teamId, channelId } = extractChannelIds(activity?.channelData);
-    if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
-    url = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
-  } else {
-    let graphChatId;
-    if (conversationType === 'group') {
-      graphChatId = conversationId;
-    } else {
-      graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
-      if (!graphChatId) throw new Error('Could not resolve Graph chat ID for DM');
-    }
-    url = `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/unsetReaction`;
+  const url = await resolveReactionUrl(aadObjectId, conversationType, conversationId, messageId, 'remove', activity);
+  if (!url) {
+    console.debug(`[ms-teams/delegated-auth] DM reaction removal skipped: no reliable chat mapping for ${conversationId}`);
+    return;
   }
 
   const res = await fetch(url, {

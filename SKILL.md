@@ -50,7 +50,7 @@ config:
     - name: MSTEAMS_PUBLIC_URL
       description: "Canonical public HTTPS URL including base path (e.g. https://bot.example.com/ms-teams). Used for OAuth redirects and Graph subscriptions. Falls back to x-forwarded-* headers if not set."
 
-next-steps: "BEFORE starting the service: 1) Ensure MSTEAMS_APP_ID and MSTEAMS_APP_PASSWORD are set in ~/zylos/.env. 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/ms-teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
+next-steps: "BEFORE starting the service: 1) Run 'zylos configure ms-teams' to set credentials (stored in config.json; legacy .env values are also read as fallback). 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots and MSTEAMS_PUBLIC_URL for OAuth/subscriptions. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/ms-teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
 
 http_routes:
   - path: /ms-teams/api/messages

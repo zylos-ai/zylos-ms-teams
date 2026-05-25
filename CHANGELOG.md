@@ -13,30 +13,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Admin CLI: per-group allowFrom management — `add-group-allow`, `remove-group-allow`, `list-group-allow`
 - Admin CLI: per-channel allowFrom management — `add-channel-allow`, `remove-channel-allow`, `list-channel-allow`
 - Admin CLI: `add-group` now accepts optional `[mode]` parameter (mention|smart), matching Lark CLI
+- Admin CLI: `set-teams-app-catalog-id` command for configuring deterministic DM reaction mapping
 - `escapeHtml` helper in format.js for HTML output contexts
-- Credential storage in config.json with .env fallback (`config.credentials`)
+- `getPublicUrl()` and `getTeamsAppCatalogId()` config helpers with legacy env fallback
 - File size bound (25 MB) on send-media endpoint
 
 ### Changed
 - Groups auto-added by owner now include `mode: "mention"` by default (previously omitted, causing inconsistent metadata)
 - Standardized group config schema: all groups now have `name`, `mode`, `allowFrom`, `added_at` fields
+- Configure hook writes credentials and publicUrl to config.json only (no longer writes to global .env)
 - `getCredentials()` reads from `config.json` first, falls back to environment variables
-- Configure hook writes credentials to both config.json and .env
+- `buildRedirectUri()` reads public URL from config via `getPublicUrl()` instead of `process.env` directly
+- DM reactions disabled by default; enabled only when `teamsAppCatalogId` is configured (deterministic installed-app Graph filter replaces unreliable recency-based matching)
+- OAuth state binding is now atomic: `consumeState()` replaces separate `validateState()`/delete, stored `redirectUri` used for token exchange instead of reconstructing from callback request
 - Conversation-store load/save uses async file I/O (`fs/promises`)
 - Send-media endpoint uses async file read
-- DM reaction resolution uses `$orderby` for accurate chat matching
 - Subscription renewal loop passes `notificationUrl` for recreation on failure
 - Delegated auth token reload is mtime-aware
-- Admin CLI help text clarified
+- `[SKIP]` in send.js now cleans up thinking reaction before exiting
+- Post-install and admin CLI instructions reference config.json instead of .env
+- DESIGN.md clarifies internal endpoints are localhost-only (not Caddy-proxied)
+- Admin CLI help text documents groupPolicy:disabled owner exception
 
 ### Fixed
 - XSS: HTML-escape `displayName` and `error_description` in OAuth callback pages
 - Subscription renewal: recreate subscription after failed renewal
-- OAuth state consumed before token exchange to prevent replay attacks
 
 ### Removed
 - Dead `downloadHostedContent` function from graph.js
 - Dead `MSTEAMS_GRAPH_TOKEN` references from README.md and SKILL.md
+- `appendEnvVar` from configure hook (config.json is the sole write target)
+
+## [0.1.3] - 2026-05-25
+
+### Added
+- Route prefix validation: reject `X-Forwarded-Prefix` containing `//`, `?`, `#`, `%`, `\`, `..`, control characters, whitespace, HTML metacharacters (`<>"'\`&`)
+- Subscription redirect validation: `notificationUrl` validated against configured public URL to prevent open redirect
+- Test suite expanded from 138 to 178 tests
+
+### Changed
+- Conversation-store uses bounded async I/O for load/save operations
+- Credential values stripped from pre-ACL log output
+- Public URL validated before use in subscription creation
+
+### Fixed
+- XSS via `X-Forwarded-Prefix` injection in OAuth redirect URI construction
+- Open redirect in Graph subscription `notificationUrl` when `X-Forwarded-*` headers are attacker-controlled
 
 ## [0.1.2] - 2026-05-18
 

@@ -412,6 +412,23 @@ const commands = {
     console.log('Run: pm2 restart zylos-ms-teams');
   },
 
+  'set-teams-app-catalog-id': (catalogId) => {
+    if (!catalogId) {
+      console.error('Usage: admin.js set-teams-app-catalog-id <catalog_id>');
+      console.error('\nThe catalog ID is the Teams-generated app ID (different from your Azure App ID).');
+      console.error('Find it via Teams Admin Center > Manage apps, or query:');
+      console.error("  GET /appCatalogs/teamsApps?$filter=externalId eq '{your_manifest_id}'");
+      console.error('\nDM reactions are disabled until this is configured.');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    config.teamsAppCatalogId = catalogId;
+    saveConfigOrExit(config);
+    console.log(`Teams app catalog ID set to: ${catalogId}`);
+    console.log('DM reactions are now enabled (requires delegated auth).');
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
   'graph-status': () => {
     const creds = getCredentials();
     const hasGraph = !!(creds.appId && creds.appPassword && creds.tenantId);
@@ -420,8 +437,10 @@ const commands = {
     console.log(`  App Password: ${creds.appPassword ? 'configured' : 'MISSING'}`);
     console.log(`  Tenant ID: ${creds.tenantId ? creds.tenantId : 'MISSING (required for Graph)'}`);
     if (!hasGraph) {
-      console.log('\nTo enable Graph API, add MSTEAMS_TENANT_ID to ~/zylos/.env');
+      console.log('\nTo enable Graph API, set MSTEAMS_TENANT_ID via the configure hook or config.json');
     }
+    const config = loadConfig();
+    console.log(`  Teams App Catalog ID: ${config.teamsAppCatalogId || 'not set (DM reactions disabled)'}`);
   },
 
   'auth-status': () => {
@@ -505,6 +524,7 @@ Commands:
 
   Graph API:
   graph-status                        Show Graph API configuration status
+  set-teams-app-catalog-id <id>       Set Teams app catalog ID (enables DM reactions)
 
   Delegated Auth (reactions):
   auth-status                         Show delegated auth users
@@ -515,7 +535,8 @@ Permission flow:
   Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom
   Group chat:  groupPolicy (disabled|allowlist|open) -> per-group allowFrom
   Channel:     groupPolicy (disabled|allowlist|open) -> per-channel allowFrom
-  Owner always bypasses access control checks.
+  Owner always bypasses access control checks
+  (except groupPolicy:disabled — blocks all group messages including from owner).
 
 After changes, restart: pm2 restart zylos-ms-teams
 `);

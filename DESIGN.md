@@ -109,16 +109,18 @@ Located at `~/zylos/components/ms-teams/config.json`:
 
 ### 4.3 HTTP Routes
 
-Caddy proxies:
+Caddy proxies (public routes):
 - `/ms-teams/api/messages` → `localhost:3978/api/messages` (Bot Framework webhook)
 - `/ms-teams/api/notifications` → `localhost:3978/api/notifications` (Graph subscription webhook for smart-mode channels)
 - `/ms-teams/auth/callback` → `localhost:3978/auth/callback` (OAuth2 delegated auth callback)
 - `/ms-teams/auth/sign-in` → `localhost:3978/auth/sign-in` (OAuth2 sign-in redirect)
 - `/ms-teams/health` → `localhost:3978/health` (Health check endpoint)
-- `/ms-teams/internal/send` → `localhost:3978/internal/send` (Internal send endpoint)
-- `/ms-teams/internal/stream` → `localhost:3978/internal/stream` (Internal stream endpoint)
-- `/ms-teams/internal/send-media` → `localhost:3978/internal/send-media` (Internal media send endpoint)
-- `/ms-teams/internal/react` → `localhost:3978/internal/react` (Internal reaction endpoint)
+
+Internal endpoints (localhost-only, protected by internal token — not exposed through Caddy):
+- `/internal/send` — C4 outbound message delivery
+- `/internal/stream` — Progressive message updates (stream start/update/end)
+- `/internal/send-media` — Media file delivery (images, files)
+- `/internal/react` — Reaction set/remove operations
 
 ## 5. Security
 

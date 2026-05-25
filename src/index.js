@@ -18,7 +18,7 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { App, ExpressAdapter } from '@microsoft/teams.apps';
 
-import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, resolveRouteConfig, isSmartConversation } from './lib/config.js';
+import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, getPublicUrl, resolveRouteConfig, isSmartConversation } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
@@ -928,8 +928,8 @@ function validatePublicUrl(raw) {
   }
 }
 
-async function getPublicUrl() {
-  const configured = validatePublicUrl(process.env.MSTEAMS_PUBLIC_URL);
+async function resolvePublicUrl() {
+  const configured = validatePublicUrl(getPublicUrl());
   if (configured) return configured;
   try {
     const res = await fetch('http://127.0.0.1:4040/api/tunnels', { signal: AbortSignal.timeout(3000) });
@@ -954,9 +954,9 @@ async function initChannelSubscriptions() {
     return;
   }
 
-  const publicUrl = await getPublicUrl();
+  const publicUrl = await resolvePublicUrl();
   if (!publicUrl) {
-    console.warn('[ms-teams/subs] No public URL found (set MSTEAMS_PUBLIC_URL or run ngrok). Channel subscriptions disabled.');
+    console.warn('[ms-teams/subs] No public URL found (set MSTEAMS_PUBLIC_URL in config or run ngrok). Channel subscriptions disabled.');
     return;
   }
 
