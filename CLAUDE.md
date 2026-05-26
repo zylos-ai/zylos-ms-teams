@@ -7,6 +7,7 @@ Development guidelines for zylos-ms-teams.
 - **ESM only** — Use `import`/`export`, never `require()`. All files use ES Modules (`"type": "module"` in package.json)
 - **Node.js 20+** — Minimum runtime version
 - **Conventional commits** — `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`
+- **No `files` in package.json** — Rely on `.gitignore` to exclude unnecessary files. Use `.npmignore` if publishing to npm
 - **Secrets in `.env` only** — Never commit secrets. Use `~/zylos/.env` for credentials, `config.json` for non-sensitive runtime config
 - **English for code** — Comments, commit messages, PR descriptions, and documentation in English
 
@@ -45,3 +46,5 @@ This is a **communication component** for the Zylos agent ecosystem.
 - `scripts/download-attachments.js` — On-demand attachment download for smart-mode conversations
 - `hooks/` — Lifecycle hooks (configure, post-install, pre-upgrade, post-upgrade)
 - `ecosystem.config.cjs` — PM2 service config (CommonJS required by PM2)
+
+See [DESIGN.md](./DESIGN.md) for full architecture documentation.
