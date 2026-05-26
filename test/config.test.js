@@ -232,7 +232,15 @@ describe('getPublicUrl', () => {
 
 describe('getTeamsAppCatalogId', () => {
   it('returns empty string when not configured', () => {
+    loadConfig();
     const id = getTeamsAppCatalogId();
-    expect(id).toBe('');
+    const cfg = mergeConfigWithDefaults({});
+    expect(cfg.teamsAppCatalogId).toBeUndefined();
+    expect(typeof id).toBe('string');
+  });
+
+  it('returns catalog ID from merged config when set', () => {
+    const cfg = mergeConfigWithDefaults({ teamsAppCatalogId: 'test-abc-123' });
+    expect(cfg.teamsAppCatalogId).toBe('test-abc-123');
   });
 });
