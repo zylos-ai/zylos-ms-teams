@@ -231,5 +231,7 @@ export function getPublicUrl() {
 
 export function getTeamsAppCatalogId() {
   const cfg = getConfig();
-  return cfg.teamsAppCatalogId || '';
+  // Fall back to the env var (set by dashboard provisioning) when not in config,
+  // mirroring getCredentials()/getPublicUrl(). Config value takes precedence.
+  return cfg.teamsAppCatalogId || process.env.MSTEAMS_APP_CATALOG_ID || '';
 }

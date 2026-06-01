@@ -231,6 +231,16 @@ describe('getPublicUrl', () => {
 });
 
 describe('getTeamsAppCatalogId', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    if (originalEnv.MSTEAMS_APP_CATALOG_ID) {
+      process.env.MSTEAMS_APP_CATALOG_ID = originalEnv.MSTEAMS_APP_CATALOG_ID;
+    } else {
+      delete process.env.MSTEAMS_APP_CATALOG_ID;
+    }
+  });
+
   it('returns empty string when not configured', () => {
     loadConfig();
     const id = getTeamsAppCatalogId();
@@ -242,5 +252,21 @@ describe('getTeamsAppCatalogId', () => {
   it('returns catalog ID from merged config when set', () => {
     const cfg = mergeConfigWithDefaults({ teamsAppCatalogId: 'test-abc-123' });
     expect(cfg.teamsAppCatalogId).toBe('test-abc-123');
+  });
+
+  it('prefers the config value over the env var when both are set', () => {
+    const cfg = loadConfig();
+    cfg.teamsAppCatalogId = 'config-catalog-id';
+    process.env.MSTEAMS_APP_CATALOG_ID = 'env-catalog-id';
+    expect(getTeamsAppCatalogId()).toBe('config-catalog-id');
+  });
+
+  it('falls back to the MSTEAMS_APP_CATALOG_ID env var when not in config', () => {
+    // Mutate the cached config so the test is deterministic regardless of any
+    // local config.json that may have a catalog ID set.
+    const cfg = loadConfig();
+    delete cfg.teamsAppCatalogId;
+    process.env.MSTEAMS_APP_CATALOG_ID = 'env-catalog-id';
+    expect(getTeamsAppCatalogId()).toBe('env-catalog-id');
   });
 });
