@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-01
+
+### Fixed
+- `getTeamsAppCatalogId()` now falls back to the `MSTEAMS_APP_CATALOG_ID`
+  environment variable when not present in `config.json` (config value still
+  takes precedence), mirroring `getCredentials()` and `getPublicUrl()`. This
+  makes a dashboard-provisioned App Catalog ID (written to the VM `.env`)
+  actually take effect at runtime; previously the value was ignored unless
+  also written to `config.json`. The `[0.1.4]` changelog already described
+  this fallback, but it was only implemented for `getPublicUrl()`.
+
 ## [0.1.4] - 2026-05-26
 
 ### Added
