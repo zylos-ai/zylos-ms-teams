@@ -14,6 +14,8 @@ describe('mergeConfigWithDefaults', () => {
     expect(result.dmPolicy).toBe('owner');
     expect(result.owner.bound).toBe(false);
     expect(result.message.context_messages).toBe(10);
+    expect(result.dmWelcomeMessage).toBe('');
+    expect(result.voiceTranscription).toBe('auto');
   });
 
   it('merges top-level overrides', () => {
@@ -37,8 +39,10 @@ describe('mergeConfigWithDefaults', () => {
 
   it('preserves channels and groups from input', () => {
     const channels = { 'ch-1': { mode: 'smart' } };
-    const result = mergeConfigWithDefaults({ channels });
+    const groups = { 'grp-1': { mode: 'mention' } };
+    const result = mergeConfigWithDefaults({ channels, groups });
     expect(result.channels).toEqual(channels);
+    expect(result.groups).toEqual(groups);
   });
 
   it('defaults channels to empty object when not provided', () => {

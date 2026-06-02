@@ -10,7 +10,6 @@ import dotenv from 'dotenv';
 import express from 'express';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,7 +20,7 @@ import { App, ExpressAdapter } from '@microsoft/teams.apps';
 import { getConfig, watchConfig, saveConfig, stopWatching, DATA_DIR, getCredentials, getPublicUrl, resolveRouteConfig, isSmartConversation } from './lib/config.js';
 import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.js';
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
-import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
+import { htmlToText, htmlToMarkdown, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
@@ -34,6 +33,10 @@ import { recordHistoryEntry, getInMemoryContext, formatContextBlock, ensureRepla
 import { registerRoutes } from './routes.js';
 import { sendToC4 } from './lib/c4.js';
 import { replyIfUnsupportedInboundContent } from './lib/inbound-content.js';
+import { extractCardText } from './lib/card-extractor.js';
+import { loadSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
+import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
+import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
 
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
@@ -64,23 +67,6 @@ try {
 console.log('[ms-teams] Starting...');
 console.log(`[ms-teams] Data directory: ${DATA_DIR}`);
 
-const TRANSCRIBE_SCRIPT = path.join(process.env.HOME, 'zylos/bin/transcribe');
-let VOICE_ENABLED = false;
-try {
-  execFileSync(TRANSCRIBE_SCRIPT, ['--check'], { timeout: 5000 });
-  VOICE_ENABLED = true;
-} catch {}
-console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? 'enabled' : 'disabled (whisper or transcribe.py not found)'}`);
-
-function transcribeAudio(audioPath) {
-  return new Promise((resolve, reject) => {
-    execFile(TRANSCRIBE_SCRIPT, [audioPath], { timeout: 90000, encoding: 'utf8' }, (err, stdout) => {
-      if (err) return reject(err);
-      resolve((stdout || '').trim());
-    });
-  });
-}
-
 // Message deduplication
 const messageDeduper = createMessageDeduper({
   ttlMs: MESSAGE_DEDUP_TTL_MS,
@@ -106,6 +92,12 @@ if (!config.enabled) {
   process.exit(0);
 }
 
+let transcriptionProvider = getTranscriptionProvider(config.voiceTranscription);
+let VOICE_ENABLED = transcriptionProvider.available;
+console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? `enabled (${transcriptionProvider.provider})` : 'disabled/unavailable'}`);
+
+const seenDmUsers = loadSeenDmUsers();
+
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
@@ -126,6 +118,8 @@ const mentions = createMentionHelpers(() => botId);
 watchConfig(async (newConfig) => {
   console.log('[ms-teams] Config reloaded');
   config = newConfig;
+  transcriptionProvider = getTranscriptionProvider(config.voiceTranscription);
+  VOICE_ENABLED = transcriptionProvider.available;
   if (!newConfig.enabled) {
     console.log('[ms-teams] Component disabled, stopping...');
     shutdown();
@@ -230,6 +224,11 @@ function extractMessageContent(activity) {
   return activity.text || '';
 }
 
+function appendCardText(text, activity) {
+  const cardText = extractCardText(activity.attachments || []);
+  return [text, cardText].filter(part => String(part || '').trim()).join('\n\n');
+}
+
 async function saveConvRef(activity, ref) {
   const conversationId = activity.conversation?.id;
   if (!conversationId) return;
@@ -267,8 +266,8 @@ async function handleMessage(ctx) {
   const conversationId = activity.conversation?.id || '';
   const convType = getConversationType(activity);
 
-  const rawText = extractMessageContent(activity);
-  const text = htmlToText(rawText);
+  const rawText = appendCardText(extractMessageContent(activity), activity);
+  const text = htmlToMarkdown(rawText);
   let quotedReply = extractQuotedReply(activity);
 
   console.log(`[ms-teams] ${convType} message from ${senderName} (${senderAadObjectId})`);
@@ -325,6 +324,13 @@ async function handleMessage(ctx) {
       await access.bindOwner(senderAadObjectId, senderName);
     }
 
+    await sendDmWelcomeIfFirstSeen({
+      ctx,
+      aadObjectId: senderAadObjectId,
+      message: config.dmWelcomeMessage,
+      seenUsers: seenDmUsers,
+    });
+
     if (!access.isDmAllowed(senderAadObjectId)) {
       logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
       await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
@@ -358,7 +364,7 @@ async function handleMessage(ctx) {
     });
     if (audioFile && VOICE_ENABLED) {
       try {
-        const transcript = await transcribeAudio(audioFile.path);
+        const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription });
         console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
         const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
         startTyping(conversationId);
@@ -450,9 +456,9 @@ async function handleMessage(ctx) {
       }
     }
 
-    const groupRaw = extractMessageContent(activity);
+    const groupRaw = appendCardText(extractMessageContent(activity), activity);
     const groupActivity = { ...activity, text: groupRaw };
-    let cleanText = htmlToText(mentions.replaceBotMention(groupActivity, botName));
+    let cleanText = htmlToMarkdown(mentions.replaceBotMention(groupActivity, botName));
     const botMentionEntity = activity.entities?.find(e => mentions.isBotMention(e));
     if (botMentionEntity?.mentioned?.name && cleanText.startsWith(botMentionEntity.mentioned.name)) {
       cleanText = cleanText.slice(botMentionEntity.mentioned.name.length).trim();
@@ -469,7 +475,7 @@ async function handleMessage(ctx) {
             const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
             const parentText = parentMsg.body?.contentType === 'text'
               ? parentMsg.body?.content || ''
-              : htmlToText(parentMsg.body?.content || '');
+              : htmlToMarkdown(parentMsg.body?.content || '');
             if (parentText.trim()) {
               quotedReply = { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
             }
@@ -549,7 +555,7 @@ async function handleMessage(ctx) {
       });
       if (audioFile) {
         try {
-          const transcript = await transcribeAudio(audioFile.path);
+          const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription });
           console.log(`[ms-teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
           cleanText = `[Voice] ${transcript}`;
           fs.unlink(audioFile.path, () => {});
@@ -632,7 +638,7 @@ async function handleChannelNotification(notification) {
   const senderAadId = graphMsg.from?.user?.id || '';
   const text = graphMsg.body?.contentType === 'text'
     ? graphMsg.body.content || ''
-    : htmlToText(graphMsg.body?.content || '');
+    : htmlToMarkdown(graphMsg.body?.content || '');
 
   const graphAttachments = (graphMsg.attachments || []).filter(a =>
     a.contentType !== 'messageReference'
@@ -679,7 +685,7 @@ async function handleChannelNotification(notification) {
       const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
       const parentText = parentMsg.body?.contentType === 'text'
         ? parentMsg.body?.content || ''
-        : htmlToText(parentMsg.body?.content || '');
+        : htmlToMarkdown(parentMsg.body?.content || '');
       if (parentText.trim()) {
         quotedReply = { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
       }
@@ -722,6 +728,76 @@ async function handleChannelNotification(notification) {
 
 // ── Teams Event Handlers ──
 
+function isForwardAllowedForActivity(activity) {
+  const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
+  const conversationId = activity.conversation?.id || '';
+  const convType = getConversationType(activity);
+  if (convType === 'dm') return access.isDmAllowed(senderAadObjectId);
+
+  const senderIsOwner = access.isOwner(senderAadObjectId);
+  if ((config.groupPolicy || 'allowlist') === 'disabled') return false;
+  if (!access.isConversationAllowed(convType, conversationId) && !senderIsOwner) return false;
+
+  const routeConfig = resolveRouteConfig(convType, conversationId, config);
+  if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
+    return routeConfig.allowFrom.includes(senderAadObjectId);
+  }
+  return true;
+}
+
+async function handleMessageUpdate(ctx) {
+  const activity = ctx.activity;
+  if (!activity || isDuplicate(activityDedupKey(activity, 'update'))) return;
+  await saveConvRef(activity, ctx.ref);
+  if (!isForwardAllowedForActivity(activity)) return;
+
+  const senderName = activity.from?.name || 'unknown';
+  const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
+  const conversationId = activity.conversation?.id || '';
+  const convType = getConversationType(activity);
+  const rawText = appendCardText(extractMessageContent(activity), activity);
+  const text = htmlToMarkdown(rawText);
+  if (!text.trim()) return;
+
+  const groupName = convType === 'dm' ? undefined : access.getConversationName(convType, conversationId);
+  const msg = formatMessage(convType, senderName, editedMessageText(text), { groupName });
+  const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
+  sendToC4('ms-teams', endpoint, msg);
+}
+
+async function handleMessageDelete(ctx) {
+  const activity = ctx.activity;
+  if (!activity || isDuplicate(activityDedupKey(activity, 'delete'))) return;
+  await saveConvRef(activity, ctx.ref);
+  if (!isForwardAllowedForActivity(activity)) return;
+
+  const senderName = activity.from?.name || 'unknown';
+  const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
+  const conversationId = activity.conversation?.id || '';
+  const convType = getConversationType(activity);
+  console.log(`[ms-teams] Message deleted by ${senderName} (${senderAadObjectId}) in ${conversationId}`);
+
+  const groupName = convType === 'dm' ? undefined : access.getConversationName(convType, conversationId);
+  const msg = formatMessage(convType, senderName, deletedMessageText(senderName), { groupName });
+  const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
+  sendToC4('ms-teams', endpoint, msg);
+}
+
+async function handleInvoke(ctx) {
+  const activity = ctx.activity;
+  if (!activity || isDuplicate(activityDedupKey(activity, 'invoke'))) return;
+  await saveConvRef(activity, ctx.ref);
+  if (!isForwardAllowedForActivity(activity)) return;
+
+  const senderName = activity.from?.name || 'unknown';
+  const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
+  const conversationId = activity.conversation?.id || '';
+  const convType = getConversationType(activity);
+  const payload = extractCardActionPayload(activity);
+  const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
+  sendToC4('ms-teams', endpoint, cardActionMessage(senderName, payload));
+}
+
 teamsApp.on('message', async (ctx) => {
   try {
     await handleMessage(ctx);
@@ -732,6 +808,30 @@ teamsApp.on('message', async (ctx) => {
     } catch (sendErr) {
       console.error(`[ms-teams] Failed to send error response: ${sendErr.message}`);
     }
+  }
+});
+
+teamsApp.on('messageUpdate', async (ctx) => {
+  try {
+    await handleMessageUpdate(ctx);
+  } catch (err) {
+    console.error(`[ms-teams] Error handling messageUpdate: ${err.message}`);
+  }
+});
+
+teamsApp.on('messageDelete', async (ctx) => {
+  try {
+    await handleMessageDelete(ctx);
+  } catch (err) {
+    console.error(`[ms-teams] Error handling messageDelete: ${err.message}`);
+  }
+});
+
+teamsApp.on('invoke', async (ctx) => {
+  try {
+    await handleInvoke(ctx);
+  } catch (err) {
+    console.error(`[ms-teams] Error handling invoke: ${err.message}`);
   }
 });
 

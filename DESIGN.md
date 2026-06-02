@@ -139,6 +139,11 @@ Internal endpoints (localhost-only, protected by internal token — not exposed 
 
 ## 7. Future Improvements
 
-- Adaptive Card rendering for rich outbound messages
 - Thread/reply-chain awareness for multi-turn group conversations
 - Multi-tenant support (cross-organization)
+- Video understanding: extract keyframes from video attachments with ffmpeg
+  and forward selected frames for model analysis. This depends on ffmpeg and a
+  separate frame-selection policy.
+- Read receipts: use Microsoft Graph ChatMessage readReceipt resources when
+  `ChatMessage.Read` permission is available. This needs a dedicated
+  permission and privacy review before implementation.

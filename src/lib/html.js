@@ -117,6 +117,67 @@ export function htmlToText(html) {
   return text;
 }
 
+function stripTags(text) {
+  return text.replace(/<[^>]+>/g, '');
+}
+
+function normalizeMarkdown(text) {
+  return decodeEntities(text)
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Convert Teams HTML to Markdown for C4 delivery while preserving useful
+ * structure for the agent.
+ */
+export function htmlToMarkdown(html) {
+  if (!html) return '';
+  if (!/<[^>]+>/.test(html)) return html;
+
+  let text = html.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  text = text.replace(/<pre(?:\s[^>]*)?>\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, code) => {
+    return `\n\`\`\`\n${stripTags(code.replace(/<br\s*\/?>/gi, '\n'))}\n\`\`\`\n`;
+  });
+  text = text.replace(/<pre(?:\s[^>]*)?>([\s\S]*?)<\/pre>/gi, (_, code) => {
+    return `\n\`\`\`\n${stripTags(code.replace(/<br\s*\/?>/gi, '\n'))}\n\`\`\`\n`;
+  });
+
+  text = text.replace(/<h([1-6])(?:\s[^>]*)?>([\s\S]*?)<\/h\1>/gi, (_, level, inner) => {
+    return `\n${'#'.repeat(Number(level))} ${stripTags(inner).trim()}\n`;
+  });
+  text = text.replace(/<blockquote(?:\s[^>]*)?>([\s\S]*?)<\/blockquote>/gi, (_, inner) => {
+    return `\n${htmlToMarkdown(inner).split('\n').map(line => line.trim() ? `> ${line}` : '>').join('\n')}\n`;
+  });
+  text = text.replace(/<ol(?:\s[^>]*)?>([\s\S]*?)<\/ol>/gi, (_, inner) => {
+    let i = 0;
+    return '\n' + inner.replace(/<li(?:\s[^>]*)?>([\s\S]*?)<\/li>/gi, (_m, item) => `${++i}. ${htmlToMarkdown(item)}\n`);
+  });
+  text = text.replace(/<ul(?:\s[^>]*)?>([\s\S]*?)<\/ul>/gi, (_, inner) => {
+    return '\n' + inner.replace(/<li(?:\s[^>]*)?>([\s\S]*?)<\/li>/gi, (_m, item) => `- ${htmlToMarkdown(item)}\n`);
+  });
+  text = text.replace(/<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, linkText) => {
+    const cleanLink = htmlToMarkdown(linkText).trim();
+    if (!cleanLink || cleanLink === href) return href;
+    return `[${cleanLink}](${href})`;
+  });
+  text = text.replace(/<code(?:\s[^>]*)?>([\s\S]*?)<\/code>/gi, (_, code) => `\`${stripTags(code)}\``);
+  text = text.replace(/<(?:b|strong)(?:\s[^>]*)?>([\s\S]*?)<\/(?:b|strong)>/gi, '**$1**');
+  text = text.replace(/<(?:i|em)(?:\s[^>]*)?>([\s\S]*?)<\/(?:i|em)>/gi, '_$1_');
+  text = text.replace(/<at(?:\s[^>]*)?>([\s\S]*?)<\/at>/gi, '$1');
+  text = text.replace(/<(?:emoji|img)\s+[^>]*alt=["']([^"']+)["'][^>]*\/?>/gi, '$1');
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/(?:p|div)>/gi, '\n');
+  text = text.replace(/<(?:p|div)(?:\s[^>]*)?>/gi, '\n');
+  text = text.replace(/<li(?:\s[^>]*)?>/gi, '\n- ');
+  text = text.replace(/<\/li>/gi, '');
+  text = stripTags(text);
+
+  return normalizeMarkdown(text);
+}
+
 /**
  * Extract quoted reply text from a Teams message activity.
  *
