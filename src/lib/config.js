@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { selectConfiguredEntry } from './allowlist.js';
+import { attachAllowlistResolution, loadAllowlistResolution } from './allowlist-resolution.js';
 
 const HOME = process.env.HOME;
 export const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -25,6 +27,7 @@ export const DEFAULT_CONFIG = {
   voiceTranscription: 'auto',
   whisperModel: '',
   groupPolicy: 'allowlist',
+  allowlistResolutionIntervalMs: 60 * 60 * 1000,
   groups: {},
   channels: {},
   message: {
@@ -36,6 +39,17 @@ let config = null;
 let configWatcher = null;
 let configReloadTimer = null;
 
+function normalizeConversationMap(value) {
+  if (Array.isArray(value)) {
+    return Object.fromEntries(value.map(entry => [String(entry), {
+      name: String(entry),
+      mode: 'mention',
+      allowFrom: [],
+    }]));
+  }
+  return value || {};
+}
+
 export function mergeConfigWithDefaults(parsed = {}) {
   return {
     ...DEFAULT_CONFIG,
@@ -44,8 +58,8 @@ export function mergeConfigWithDefaults(parsed = {}) {
       ...DEFAULT_CONFIG.owner,
       ...(parsed.owner || {})
     },
-    channels: parsed.channels || {},
-    groups: parsed.groups || {},
+    channels: normalizeConversationMap(parsed.channels),
+    groups: normalizeConversationMap(parsed.groups),
     promptStarters: Array.isArray(parsed.promptStarters)
       ? parsed.promptStarters
       : DEFAULT_CONFIG.promptStarters,
@@ -77,11 +91,9 @@ export function resolveRouteConfig(convType, conversationId, config) {
     allowFrom: [],
   };
 
-  const baseConvId = conversationId.split(';')[0];
-
   if (convType === 'channel') {
     const channels = config.channels || {};
-    const chCfg = channels[conversationId] || channels[baseConvId];
+    const chCfg = selectConfiguredEntry(channels, conversationId);
     if (!chCfg) return result;
 
     if (chCfg.mode === 'smart') result.requireMention = false;
@@ -104,7 +116,7 @@ export function resolveRouteConfig(convType, conversationId, config) {
     }
   } else {
     const groups = config.groups || {};
-    const grpCfg = groups[conversationId] || groups[baseConvId];
+    const grpCfg = selectConfiguredEntry(groups, conversationId);
     if (grpCfg && Array.isArray(grpCfg.allowFrom) && grpCfg.allowFrom.length > 0) {
       result.allowFrom = grpCfg.allowFrom;
     }
@@ -114,10 +126,9 @@ export function resolveRouteConfig(convType, conversationId, config) {
 }
 
 export function isSmartConversation(config, convType, conversationId) {
-  const baseId = conversationId.split(';')[0];
   if (convType === 'channel') {
     const channels = config.channels || {};
-    const ch = channels[conversationId] || channels[baseId];
+    const ch = selectConfiguredEntry(channels, conversationId);
     if (!ch) return false;
     // Check post-level override first
     const threadMatch = conversationId.match(/;messageid=(\d+)/);
@@ -128,7 +139,7 @@ export function isSmartConversation(config, convType, conversationId) {
     return ch.mode === 'smart';
   }
   const groups = config.groups || {};
-  const group = groups[conversationId] || groups[baseId];
+  const group = selectConfiguredEntry(groups, conversationId);
   return group?.mode === 'smart';
 }
 
@@ -137,14 +148,14 @@ export function loadConfig() {
     if (fs.existsSync(CONFIG_PATH)) {
       const content = fs.readFileSync(CONFIG_PATH, 'utf8');
       const parsed = JSON.parse(content);
-      config = mergeConfigWithDefaults(parsed);
+      config = attachAllowlistResolution(mergeConfigWithDefaults(parsed), loadAllowlistResolution());
     } else {
       console.warn(`[ms-teams] Config file not found: ${CONFIG_PATH}`);
-      config = mergeConfigWithDefaults();
+      config = attachAllowlistResolution(mergeConfigWithDefaults(), loadAllowlistResolution());
     }
   } catch (err) {
     console.error(`[ms-teams] Failed to load config: ${err.message}`);
-    config = mergeConfigWithDefaults();
+    config = attachAllowlistResolution(mergeConfigWithDefaults(), loadAllowlistResolution());
   }
   return config;
 }
@@ -161,7 +172,7 @@ export function saveConfig(newConfig) {
   try {
     fs.writeFileSync(tmpPath, JSON.stringify(newConfig, null, 2));
     fs.renameSync(tmpPath, CONFIG_PATH);
-    config = newConfig;
+    config = attachAllowlistResolution(newConfig, newConfig._allowlistResolution || loadAllowlistResolution());
     return true;
   } catch (err) {
     console.error(`[ms-teams] Failed to save config: ${err.message}`);

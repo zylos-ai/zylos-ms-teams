@@ -180,6 +180,32 @@ export function getAuthenticatedUsers() {
   }));
 }
 
+export async function probeDelegatedAuth({ users = getAuthenticatedUsers(), tokenProvider = getDelegatedToken } = {}) {
+  if (users.length === 0) {
+    return { configured: false, results: [] };
+  }
+  const results = [];
+  for (const user of users) {
+    try {
+      const token = await tokenProvider(user.aadObjectId);
+      results.push({
+        aadObjectId: user.aadObjectId,
+        displayName: user.displayName,
+        ok: Boolean(token),
+        detail: token ? 'delegated token acquired' : 'delegated token unavailable; user should re-authenticate',
+      });
+    } catch (err) {
+      results.push({
+        aadObjectId: user.aadObjectId,
+        displayName: user.displayName,
+        ok: false,
+        detail: `${err.message}; user should re-authenticate if refresh failed`,
+      });
+    }
+  }
+  return { configured: true, results };
+}
+
 export function revokeAuth(aadObjectId) {
   loadTokens();
   if (!tokens[aadObjectId]) return false;

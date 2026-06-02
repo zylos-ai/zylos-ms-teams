@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR, getCredentials, getPublicUrl } from './config.js';
-import { isGraphEnabled, acquireTokenForScope } from './graph.js';
+import { isGraphEnabled, acquireTokenForScope, probeGraphToken } from './graph.js';
 import { getActiveSubscriptions } from './channel-subscriptions.js';
 import { getCloudConfig } from './cloud.js';
+import { probeDelegatedAuth } from './delegated-auth.js';
 
 function check(name, ok, detail = '') {
   return { name, ok: Boolean(ok), detail };
@@ -22,6 +23,8 @@ export function formatDoctorReport(results) {
 export async function runDoctor(config, {
   fetchImpl = fetch,
   tokenProbe = acquireTokenForScope,
+  graphTokenProbe = probeGraphToken,
+  delegatedAuthProbe = probeDelegatedAuth,
   subscriptionsProvider = getActiveSubscriptions,
 } = {}) {
   const credentials = getCredentials();
@@ -37,10 +40,20 @@ export async function runDoctor(config, {
 
   if (credentials.appId && credentials.appPassword && credentials.tenantId) {
     try {
-      await tokenProbe('graph');
-      results.push(check('Graph token probe', true, 'token acquired'));
+      const probe = await graphTokenProbe({ tokenProvider: tokenProbe });
+      const scopes = probe.scopes || [];
+      results.push(check('Graph token probe', true, `token acquired; scopes: ${scopes.length ? scopes.join(', ') : 'none decoded'}`));
+      const required = config.graphRequiredScopes || [
+        'ChannelMessage.Read.All',
+        'Chat.Read.All',
+        'Group.Read.All',
+        'User.Read.All',
+      ];
+      const missing = required.filter(scope => !scopes.includes(scope));
+      results.push(check('Graph scope audit', missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : 'required scopes present'));
     } catch (err) {
       results.push(check('Graph token probe', false, err.message));
+      results.push(check('Graph scope audit', false, 'skipped because Graph token probe failed'));
     }
 
     try {
@@ -49,6 +62,23 @@ export async function runDoctor(config, {
     } catch (err) {
       results.push(check('Bot Framework token probe', false, err.message));
     }
+  }
+
+  try {
+    const delegatedProbe = await delegatedAuthProbe();
+    if (!delegatedProbe.configured) {
+      results.push(check('Delegated auth probe', true, 'not configured'));
+    } else {
+      for (const result of delegatedProbe.results) {
+        results.push(check(
+          `Delegated auth probe: ${result.displayName || result.aadObjectId}`,
+          result.ok,
+          result.detail
+        ));
+      }
+    }
+  } catch (err) {
+    results.push(check('Delegated auth probe', false, err.message));
   }
 
   const publicUrl = getPublicUrl();

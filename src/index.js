@@ -22,10 +22,10 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, htmlToMarkdown, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory, getThreadMessages } from './lib/graph.js';
+import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory, getThreadMessages, probeGraphToken } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
-import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
+import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers, probeDelegatedAuth } from './lib/delegated-auth.js';
 import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getClientState } from './lib/channel-subscriptions.js';
 import { writeJsonAtomic } from './lib/atomic-write.js';
 import { createAccessControl, createMentionHelpers, stripThreadId } from './lib/access.js';
@@ -43,6 +43,8 @@ import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
 import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
 import { buildPairingNotification, getPairingStatus, loadPairingState, markPairingPending, savePairingState } from './lib/dm-pairing.js';
 import { recordConversationActivity } from './lib/activity-store.js';
+import { selectConfiguredEntry } from './lib/allowlist.js';
+import { allowlistResolutionIntervalMs, refreshAllowlistResolution } from './lib/allowlist-resolution.js';
 
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
@@ -139,6 +141,7 @@ function createTeamsInboundDebouncer(delayMs) {
 }
 
 let inboundDebouncer = createTeamsInboundDebouncer(config.debounceMs || 0);
+let allowlistRefreshInterval = null;
 
 
 // Credentials check
@@ -152,12 +155,58 @@ if (!credentials.appId || !credentials.appPassword) {
 async function probeBotCredentials() {
   if (!credentials.appId || !credentials.appPassword) return;
   try {
-    await acquireTokenForScope('https://api.botframework.com/.default');
+    await acquireTokenForScope('botframework');
     console.log('[ms-teams] Bot credentials probe: ok');
   } catch (err) {
     console.error('[ms-teams] ❌ Bot credentials invalid — check appId/appPassword/tenantId');
     console.error(`[ms-teams] Credential probe error: ${err.message}`);
   }
+}
+
+async function probeGraphScopes() {
+  if (!isGraphEnabled()) return;
+  try {
+    const { scopes } = await probeGraphToken();
+    const required = config.graphRequiredScopes || ['ChannelMessage.Read.All', 'Chat.Read.All', 'Group.Read.All', 'User.Read.All'];
+    const missing = required.filter(scope => !scopes.includes(scope));
+    console.log(`[ms-teams] Graph token scopes: ${scopes.length ? scopes.join(', ') : 'none decoded'}`);
+    if (missing.length > 0) {
+      console.warn(`[ms-teams] Graph scope audit warning: missing ${missing.join(', ')}`);
+    }
+  } catch (err) {
+    console.warn(`[ms-teams] Graph token scope probe failed: ${err.message}`);
+  }
+}
+
+async function probeDelegatedAuthAtStartup() {
+  try {
+    const probe = await probeDelegatedAuth();
+    if (!probe.configured) {
+      console.log('[ms-teams] Delegated auth probe: not configured');
+      return;
+    }
+    for (const result of probe.results) {
+      const label = result.displayName || result.aadObjectId;
+      const level = result.ok ? 'log' : 'warn';
+      console[level](`[ms-teams] Delegated auth probe ${label}: ${result.detail}`);
+    }
+  } catch (err) {
+    console.warn(`[ms-teams] Delegated auth probe failed: ${err.message}`);
+  }
+}
+
+async function refreshAllowlistsNow() {
+  if (!isGraphEnabled()) return;
+  await refreshAllowlistResolution(config, { logger: console });
+}
+
+function restartAllowlistRefresh() {
+  if (allowlistRefreshInterval) clearInterval(allowlistRefreshInterval);
+  const intervalMs = allowlistResolutionIntervalMs(config);
+  allowlistRefreshInterval = setInterval(() => {
+    refreshAllowlistsNow().catch(err => console.warn(`[ms-teams/allowlist] refresh failed: ${err.message}`));
+  }, intervalMs);
+  allowlistRefreshInterval.unref?.();
 }
 
 // Bot identity
@@ -175,6 +224,8 @@ watchConfig(async (newConfig) => {
   inboundDebouncer = createTeamsInboundDebouncer(config.debounceMs || 0);
   transcriptionProvider = getTranscriptionProvider(config.voiceTranscription, process.env, { modelPath: config.whisperModel || process.env.WHISPER_MODEL });
   VOICE_ENABLED = transcriptionProvider.available;
+  restartAllowlistRefresh();
+  refreshAllowlistsNow().catch(err => console.warn(`[ms-teams/allowlist] refresh on config reload failed: ${err.message}`));
   if (!newConfig.enabled) {
     console.log('[ms-teams] Component disabled, stopping...');
     shutdown();
@@ -437,7 +488,7 @@ async function handleMessage(ctx) {
       await access.bindOwner(senderAadObjectId, senderName);
     }
 
-    if (!access.isDmAllowed(senderAadObjectId)) {
+    if (!access.isDmAllowed(senderAadObjectId, senderName)) {
       if ((config.dmPolicy || 'owner') === 'pairing') {
         const state = loadPairingState();
         const pairingStatus = getPairingStatus(senderAadObjectId, state);
@@ -547,7 +598,10 @@ async function handleMessage(ctx) {
     const allowedGroup = access.isConversationAllowed(convType, conversationId);
 
     if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
-      if (!routeConfig.allowFrom.includes(senderAadObjectId)) {
+      if (!access.isRouteAllowed(routeConfig, {
+        aadObjectId: senderAadObjectId,
+        displayName: senderName,
+      })) {
         if (mentioned) {
           logRejection('not in allowFrom');
           await ctx.send("Sorry, you don't have access in this channel.");
@@ -621,8 +675,8 @@ async function handleMessage(ctx) {
     }
 
     const convConfig = convType === 'channel'
-      ? (config.channels?.[conversationId] || config.channels?.[stripThreadId(conversationId)])
-      : (config.groups?.[conversationId] || config.groups?.[stripThreadId(conversationId)]);
+      ? selectConfiguredEntry(config.channels || {}, conversationId)
+      : selectConfiguredEntry(config.groups || {}, conversationId);
     const contextLimit = convConfig?.historyLimit || config.message?.context_messages || 10;
     await ensureReplay(conversationId, recordHistory, contextLimit);
     let contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
@@ -809,7 +863,10 @@ async function handleChannelNotification(notification) {
 
   const routeConfig = resolveRouteConfig('channel', conversationId, config);
   if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
-    if (!routeConfig.allowFrom.includes(senderAadId)) return;
+    if (!access.isRouteAllowed(routeConfig, {
+      aadObjectId: senderAadId,
+      displayName: senderName,
+    })) return;
   }
 
   const threadConversationId = rootMessageId
@@ -875,7 +932,8 @@ function isForwardAllowedForActivity(activity) {
   const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
   const conversationId = activity.conversation?.id || '';
   const convType = getConversationType(activity);
-  if (convType === 'dm') return access.isDmAllowed(senderAadObjectId);
+  const senderName = activity.from?.name || '';
+  if (convType === 'dm') return access.isDmAllowed(senderAadObjectId, senderName);
 
   const senderIsOwner = access.isOwner(senderAadObjectId);
   if ((config.groupPolicy || 'allowlist') === 'disabled') return false;
@@ -883,7 +941,10 @@ function isForwardAllowedForActivity(activity) {
 
   const routeConfig = resolveRouteConfig(convType, conversationId, config);
   if (routeConfig.allowFrom.length > 0 && !senderIsOwner) {
-    return routeConfig.allowFrom.includes(senderAadObjectId);
+    return access.isRouteAllowed(routeConfig, {
+      aadObjectId: senderAadObjectId,
+      displayName: senderName,
+    });
   }
   return true;
 }
@@ -1105,6 +1166,7 @@ function shutdown() {
   stopWatching();
   for (const interval of typingIntervals.values()) clearInterval(interval);
   typingIntervals.clear();
+  if (allowlistRefreshInterval) clearInterval(allowlistRefreshInterval);
 
   const finishExit = () => process.exit(0);
   httpServer.close(() => finishExit());
@@ -1208,6 +1270,10 @@ async function initChannelSubscriptions() {
 
 (async () => {
   void probeBotCredentials();
+  void probeGraphScopes();
+  void probeDelegatedAuthAtStartup();
+  restartAllowlistRefresh();
+  refreshAllowlistsNow().catch(err => console.warn(`[ms-teams/allowlist] startup refresh failed: ${err.message}`));
   await startServerWithRetry(PORT);
   httpServer.on('error', (err) => {
     console.error(`[ms-teams] Server error: ${err.message}`);
