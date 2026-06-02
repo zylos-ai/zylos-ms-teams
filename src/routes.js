@@ -11,6 +11,7 @@ import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, s
 import { validateClientState } from './lib/channel-subscriptions.js';
 import { recordSentMessage } from './lib/sent-message-cache.js';
 import { buildProgressText, nextProgressText } from './lib/progress-stages.js';
+import { readActivityIdFromResponse } from './lib/bot-connector.js';
 
 function sanitizePrefix(raw) {
   if (!raw) return '';
@@ -19,20 +20,6 @@ function sanitizePrefix(raw) {
   if (!prefix.startsWith('/')) return '';
   if (/\/\/|[?#%\\]|\.\.|\p{Cc}|\s|[<>"'`&]/u.test(prefix)) return '';
   return prefix;
-}
-
-async function readActivityIdFromResponse(response) {
-  try {
-    const result = await response.json();
-    if (result?.id) return result.id;
-    if (result?.activityId) return result.activityId;
-  } catch (err) {
-    console.warn(`[ms-teams] Failed to parse Bot Connector activity response: ${err.message}`);
-  }
-  return response.headers.get('resource-id')
-    || response.headers.get('activity-id')
-    || response.headers.get('id')
-    || '';
 }
 
 export function buildRedirectUri(req) {
@@ -205,6 +192,9 @@ export function registerRoutes(expressApp, deps) {
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
         const activityId = await readActivityIdFromResponse(apiRes);
+        if (!activityId) {
+          throw new Error('Bot Connector API did not return an activity id');
+        }
         recordSentMessage(targetConvId, activityId);
         const sid = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
