@@ -118,6 +118,26 @@ describe('ensureReplay (async)', () => {
     try { fs.unlinkSync(logFile); } catch {}
   });
 
+  it('keeps queued appends when replay truncates the log', async () => {
+    const chatId = '__vitest_replay_pending_append__';
+    const logFile = path.join(LOGS_DIR, `${chatId}.jsonl`);
+    const entries = Array.from({ length: 20 }, (_, i) => ({
+      timestamp: `2026-01-01T00:00:${String(i).padStart(2, '0')}Z`,
+      text: `line${i}`,
+      message_id: `pending-${i}`,
+    }));
+    fs.writeFileSync(logFile, entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+
+    logEntry(chatId, { text: 'queued-append', message_id: 'queued' });
+    await ensureReplay(chatId, () => {}, 5);
+
+    const after = fs.readFileSync(logFile, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+    expect(after.length).toBe(5);
+    expect(after.at(-1).text).toBe('queued-append');
+
+    try { fs.unlinkSync(logFile); } catch {}
+  });
+
   it('handles missing log file gracefully', async () => {
     const replayed = [];
     const chatId = '__vitest_replay_missing__';

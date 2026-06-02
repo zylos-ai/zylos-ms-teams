@@ -8,6 +8,7 @@ export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
 // Per-scope token cache: { token, expiresAt }
 const tokenCache = new Map();
+const tokenRequests = new Map();
 
 export function isGraphEnabled() {
   const creds = getCredentials();
@@ -32,6 +33,24 @@ export async function acquireTokenForScope(scope) {
     return cached.token;
   }
 
+  if (tokenRequests.has(cacheKey)) {
+    return tokenRequests.get(cacheKey);
+  }
+
+  const request = fetchTokenForScope({
+    creds,
+    cloudName,
+    resolvedScope,
+    cacheKey,
+    now,
+  }).finally(() => {
+    tokenRequests.delete(cacheKey);
+  });
+  tokenRequests.set(cacheKey, request);
+  return request;
+}
+
+async function fetchTokenForScope({ creds, cloudName, resolvedScope, cacheKey, now }) {
   const url = buildLoginUrl(creds.tenantId, cloudName);
   const body = new URLSearchParams({
     client_id: creds.appId,
@@ -61,6 +80,11 @@ export async function acquireTokenForScope(scope) {
     expiresAt: now + (data.expires_in * 1000),
   });
   return data.access_token;
+}
+
+export function _clearTokenCacheForTest() {
+  tokenCache.clear();
+  tokenRequests.clear();
 }
 
 function acquireToken() {

@@ -11,6 +11,7 @@ const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send offline_access';
 
 let tokens = {};
 let tokensMtimeMs = 0;
+const refreshPromises = new Map();
 
 function loadTokens() {
   try {
@@ -116,6 +117,19 @@ export async function exchangeCode(code, redirectUri) {
 }
 
 async function refreshToken(aadObjectId) {
+  if (refreshPromises.has(aadObjectId)) {
+    return refreshPromises.get(aadObjectId);
+  }
+
+  const promise = refreshTokenUncoalesced(aadObjectId)
+    .finally(() => {
+      refreshPromises.delete(aadObjectId);
+    });
+  refreshPromises.set(aadObjectId, promise);
+  return promise;
+}
+
+async function refreshTokenUncoalesced(aadObjectId) {
   const entry = tokens[aadObjectId];
   if (!entry?.refreshToken) return null;
 
@@ -321,6 +335,9 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
   console.log(`[ms-teams/delegated-auth] Reaction '${reactionType}' removed from ${messageId}`);
 }
 
-function _setTokensForTest(data) { tokens = data; }
+function _setTokensForTest(data) {
+  tokens = data;
+  refreshPromises.clear();
+}
 
 export { resolveGraphChatId as _resolveGraphChatId, _setTokensForTest };
