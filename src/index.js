@@ -110,12 +110,28 @@ function markDmUserSeen(aadObjectId) {
   return true;
 }
 
+function mergeCallbacks(previousCallbacks = {}, nextCallbacks = {}) {
+  const merged = {};
+  for (const key of ['onReject', 'onFail']) {
+    const callbacks = [previousCallbacks[key], nextCallbacks[key]].filter(fn => typeof fn === 'function');
+    if (callbacks.length === 1) {
+      [merged[key]] = callbacks;
+    } else if (callbacks.length > 1) {
+      merged[key] = (...args) => {
+        for (const callback of callbacks) callback(...args);
+      };
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 function createTeamsInboundDebouncer(delayMs) {
   return createInboundDebouncer({
     delayMs,
     mergeValues: (previous, next) => ({
       ...next,
       msg: [previous.msg, next.msg].filter(Boolean).join('\n\n'),
+      callbacks: mergeCallbacks(previous.callbacks, next.callbacks),
     }),
   });
 }

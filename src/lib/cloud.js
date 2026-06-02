@@ -7,6 +7,7 @@ export const CLOUDS = {
     botFrameworkScope: 'https://api.botframework.com/.default',
     botFrameworkIssuer: 'https://api.botframework.com',
     botFrameworkJwksUri: 'https://login.botframework.com/v1/.well-known/keys',
+    legacyStsIssuer: 'https://sts.windows.net/',
   },
   gccHigh: {
     name: 'gccHigh',
@@ -16,6 +17,7 @@ export const CLOUDS = {
     botFrameworkScope: 'https://api.botframework.us/.default',
     botFrameworkIssuer: 'https://api.botframework.us',
     botFrameworkJwksUri: 'https://login.botframework.us/v1/.well-known/keys',
+    legacyStsIssuer: 'https://sts.windows.net/',
   },
   dod: {
     name: 'dod',
@@ -25,6 +27,7 @@ export const CLOUDS = {
     botFrameworkScope: 'https://api.botframework.us/.default',
     botFrameworkIssuer: 'https://api.botframework.us',
     botFrameworkJwksUri: 'https://login.botframework.us/v1/.well-known/keys',
+    legacyStsIssuer: 'https://sts.windows.net/',
   },
   china: {
     name: 'china',
@@ -34,6 +37,7 @@ export const CLOUDS = {
     botFrameworkScope: 'https://api.botframework.azure.cn/.default',
     botFrameworkIssuer: 'https://api.botframework.azure.cn',
     botFrameworkJwksUri: 'https://login.botframework.azure.cn/v1/.well-known/keys',
+    legacyStsIssuer: 'https://sts.chinacloudapi.cn/',
   },
 };
 

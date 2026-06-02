@@ -4,7 +4,7 @@ import { getConfig } from './config.js';
 import { acquireTokenForScope, MEDIA_DIR, isGraphEnabled } from './graph.js';
 import { timedFetch, safeFetch } from './fetch-utils.js';
 import { extractChannelIds } from './format.js';
-import { buildGraphUrl, getCloudConfig } from './cloud.js';
+import { buildGraphUrl } from './cloud.js';
 
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 
@@ -180,13 +180,12 @@ async function saveBuffer(buffer, filename) {
 }
 
 function scopeCandidatesForUrl(url) {
-  const cloud = getCloudConfig(getConfig().cloud);
   const host = safeHostname(url);
   if (host.includes('graph.microsoft') || host.includes('microsoftgraph.chinacloudapi.cn') ||
       host.endsWith('sharepoint.com') ||
       host.endsWith('1drv.ms') || host.includes('sharepoint'))
-    return [cloud.graphScope, cloud.botFrameworkScope, 'graph', 'botframework'];
-  return [cloud.botFrameworkScope, cloud.graphScope, 'botframework', 'graph'];
+    return ['graph', 'botframework'];
+  return ['botframework', 'graph'];
 }
 
 async function fetchWithAuthFallback(url, tokenProvider) {
@@ -501,7 +500,7 @@ export {
   encodeGraphShareId, isGraphSharedLinkUrl, tryBuildGraphSharesUrl,
   normalizeServiceUrl, inferPlaceholder,
   isDownloadableAttachment, isHtmlAttachment, extractHtmlContent, extractHtmlAttachmentIds,
-  resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
+  resolveDownloadCandidate, mimeFromHeaderAndName, scopeCandidatesForUrl, buildGraphMessageUrls,
   downloadGraphMedia,
 };
 

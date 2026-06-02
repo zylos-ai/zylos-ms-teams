@@ -53,11 +53,13 @@ export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'publi
   }
 
   // Build accepted issuers list
-  const acceptedIssuers = [cloud.botFrameworkIssuer, 'https://sts.windows.net/'];
+  const acceptedIssuers = [cloud.botFrameworkIssuer, cloud.legacyStsIssuer].filter(Boolean);
   if (tenantId) {
     acceptedIssuers.push(getEntraIssuer(tenantId, cloud));
     // Legacy issuer format with tenant ID
-    acceptedIssuers.push(`https://sts.windows.net/${tenantId}/`);
+    if (cloud.legacyStsIssuer) {
+      acceptedIssuers.push(`${cloud.legacyStsIssuer}${tenantId}/`);
+    }
   }
 
   /**

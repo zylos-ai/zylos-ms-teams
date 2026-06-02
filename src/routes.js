@@ -171,6 +171,9 @@ export function registerRoutes(expressApp, deps) {
         const serviceUrl = (reference.serviceUrl || '').replace(/\/$/, '');
         const streamStages = stages || getConfig().progressStages;
         const initialText = text || buildProgressText(streamStages, 0);
+        if (!initialText.trim()) {
+          return res.status(400).json({ error: 'missing text or progress stages' });
+        }
         const activity = {
           type: 'message',
           text: initialText,

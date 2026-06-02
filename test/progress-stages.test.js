@@ -11,6 +11,10 @@ describe('progress stages', () => {
     expect(buildProgressText(['Queued', 'Working', 'Sending'], 1)).toBe('[x] Queued\n[>] Working\n[ ] Sending');
   });
 
+  it('returns empty text for an empty progress stage list', () => {
+    expect(buildProgressText([], 0)).toBe('');
+  });
+
   it('advances to the next progress stage', () => {
     expect(nextProgressText(['Queued', 'Working'], -1)).toEqual({ index: 0, text: '[>] Queued\n[ ] Working' });
     expect(nextProgressText(['Queued', 'Working'], 0)).toEqual({ index: 1, text: '[x] Queued\n[>] Working' });

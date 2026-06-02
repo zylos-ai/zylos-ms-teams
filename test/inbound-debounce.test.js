@@ -57,4 +57,28 @@ describe('inbound debouncer', () => {
     expect(dispatch).toHaveBeenCalledWith('first\nsecond');
     vi.useRealTimers();
   });
+
+  it('can preserve callbacks while merging values', async () => {
+    vi.useFakeTimers();
+    const onFail = vi.fn();
+    const debouncer = createInboundDebouncer({
+      delayMs: 100,
+      mergeValues: (previous, next) => ({
+        ...next,
+        msg: `${previous.msg}\n${next.msg}`,
+        callbacks: previous.callbacks || next.callbacks,
+      }),
+    });
+    const dispatch = vi.fn();
+
+    debouncer.schedule('conv-1', { msg: 'first', callbacks: { onFail } }, dispatch);
+    debouncer.schedule('conv-1', { msg: 'second' }, dispatch);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      msg: 'first\nsecond',
+      callbacks: { onFail },
+    });
+    vi.useRealTimers();
+  });
 });

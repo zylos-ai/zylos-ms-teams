@@ -13,6 +13,12 @@ describe('Microsoft cloud config', () => {
     expect(getCloudConfig('unknown').name).toBe('public');
   });
 
+  it('carries cloud-specific legacy STS issuers', () => {
+    expect(getCloudConfig('public').legacyStsIssuer).toBe('https://sts.windows.net/');
+    expect(getCloudConfig('gccHigh').legacyStsIssuer).toBe('https://sts.windows.net/');
+    expect(getCloudConfig('china').legacyStsIssuer).toBe('https://sts.chinacloudapi.cn/');
+  });
+
   it('builds cloud-specific login URLs', () => {
     expect(buildLoginUrl('tenant-1', 'public')).toBe('https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token');
     expect(buildLoginUrl('tenant-1', 'gccHigh')).toBe('https://login.microsoftonline.us/tenant-1/oauth2/v2.0/token');
