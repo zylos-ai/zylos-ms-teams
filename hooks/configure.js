@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeJsonAtomic } from '../src/lib/atomic-write.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -43,10 +44,7 @@ function readJsonFile(filePath, fallback) {
 }
 
 function writeJsonFile(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2) + '\n');
-  fs.renameSync(tmpPath, filePath);
+  writeJsonAtomic(filePath, value, 0o600);
 }
 
 try {

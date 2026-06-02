@@ -42,6 +42,21 @@ describe('inbound debouncer', () => {
     vi.useRealTimers();
   });
 
+  it('can flush all pending values', () => {
+    vi.useFakeTimers();
+    const debouncer = createInboundDebouncer({ delayMs: 1000 });
+    const dispatch = vi.fn();
+
+    debouncer.schedule('conv-1', 'one', dispatch);
+    debouncer.schedule('conv-2', 'two', dispatch);
+
+    expect(debouncer.flushAll()).toBe(2);
+    expect(dispatch).toHaveBeenCalledWith('one');
+    expect(dispatch).toHaveBeenCalledWith('two');
+    expect(debouncer.size()).toBe(0);
+    vi.useRealTimers();
+  });
+
   it('can merge pending values for the same key', async () => {
     vi.useFakeTimers();
     const debouncer = createInboundDebouncer({

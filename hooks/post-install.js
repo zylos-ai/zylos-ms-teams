@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeJsonAtomic } from '../src/lib/atomic-write.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -36,7 +37,7 @@ console.log('  - data/');
 const configPath = path.join(DATA_DIR, 'config.json');
 if (!fs.existsSync(configPath)) {
   console.log('\nCreating default config.json...');
-  fs.writeFileSync(configPath, JSON.stringify(INITIAL_CONFIG, null, 2));
+  writeJsonAtomic(configPath, INITIAL_CONFIG, 0o600);
   console.log('  - config.json created');
 } else {
   console.log('\nConfig already exists, skipping.');

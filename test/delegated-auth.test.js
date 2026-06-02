@@ -14,7 +14,7 @@ vi.mock('../src/lib/atomic-write.js', () => ({
   writeJsonAtomic: vi.fn(),
 }));
 
-const { buildAuthUrl, consumeState, getDelegatedToken, _resolveGraphChatId, _setTokensForTest } = await import('../src/lib/delegated-auth.js');
+const { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, _resolveGraphChatId, _setTokensForTest } = await import('../src/lib/delegated-auth.js');
 
 function injectToken(aadObjectId = 'test-user') {
   _setTokensForTest({
@@ -77,6 +77,7 @@ describe('resolveGraphChatId', () => {
 
 describe('getDelegatedToken refresh coalescing', () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -108,5 +109,26 @@ describe('getDelegatedToken refresh coalescing', () => {
     expect(first).toBe('fresh-token');
     expect(second).toBe('fresh-token');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('exchangeCode token parsing', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('fails cleanly when access token payload cannot identify the user', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        access_token: 'not-a-jwt',
+        refresh_token: 'refresh-token',
+        expires_in: 3600,
+      }),
+    })));
+
+    await expect(exchangeCode('code', 'https://example.com/auth/callback'))
+      .rejects.toThrow('missing user identifier');
   });
 });

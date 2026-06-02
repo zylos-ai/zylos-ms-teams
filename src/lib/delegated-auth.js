@@ -5,6 +5,7 @@ import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { writeJsonAtomic } from './atomic-write.js';
 import { extractChannelIds } from './format.js';
 import { buildGraphUrl, buildLoginUrl } from './cloud.js';
+import { decodeJwtPayload } from './graph.js';
 
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
 const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send offline_access';
@@ -98,10 +99,11 @@ export async function exchangeCode(code, redirectUri) {
   }
 
   const data = await res.json();
-  const payload = JSON.parse(
-    Buffer.from(data.access_token.split('.')[1], 'base64url').toString()
-  );
+  const payload = decodeJwtPayload(data.access_token);
   const aadObjectId = payload.oid || payload.sub;
+  if (!aadObjectId) {
+    throw new Error('Token exchange response missing user identifier');
+  }
   const displayName = payload.name || 'unknown';
 
   tokens[aadObjectId] = {

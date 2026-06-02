@@ -5,24 +5,60 @@ import { writeJsonAtomic } from './atomic-write.js';
 
 export const ACTIVITY_STATE_FILE = path.join(DATA_DIR, 'conversation-activity.json');
 const DEFAULT_ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const FLUSH_DELAY_MS = 250;
+const stateCache = new Map();
+const flushTimers = new Map();
 
 export function loadActivityState(filePath = ACTIVITY_STATE_FILE) {
+  if (stateCache.has(filePath)) return stateCache.get(filePath);
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    return {
+    const state = {
       conversations: parsed.conversations && typeof parsed.conversations === 'object'
         ? parsed.conversations
         : {},
     };
+    stateCache.set(filePath, state);
+    return state;
   } catch {}
-  return { conversations: {} };
+  const state = { conversations: {} };
+  stateCache.set(filePath, state);
+  return state;
 }
 
 export function saveActivityState(state, filePath = ACTIVITY_STATE_FILE) {
+  stateCache.set(filePath, state);
   writeJsonAtomic(filePath, { conversations: state.conversations || {} }, 0o600);
 }
 
-export function recordConversationActivity({ conversationId, type, name, at = new Date().toISOString() }, filePath = ACTIVITY_STATE_FILE) {
+function scheduleActivityFlush(filePath, { debounce = filePath === ACTIVITY_STATE_FILE } = {}) {
+  if (!debounce) {
+    flushActivityState(filePath);
+    return;
+  }
+  const existing = flushTimers.get(filePath);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    flushTimers.delete(filePath);
+    flushActivityState(filePath);
+  }, FLUSH_DELAY_MS);
+  timer.unref?.();
+  flushTimers.set(filePath, timer);
+}
+
+export function flushActivityState(filePath = ACTIVITY_STATE_FILE) {
+  const timer = flushTimers.get(filePath);
+  if (timer) {
+    clearTimeout(timer);
+    flushTimers.delete(filePath);
+  }
+  const state = stateCache.get(filePath);
+  if (state) {
+    writeJsonAtomic(filePath, { conversations: state.conversations || {} }, 0o600);
+  }
+}
+
+export function recordConversationActivity({ conversationId, type, name, at = new Date().toISOString() }, filePath = ACTIVITY_STATE_FILE, options = {}) {
   const id = String(conversationId || '').trim();
   if (!id) return;
   const baseId = id.split(';')[0];
@@ -33,7 +69,8 @@ export function recordConversationActivity({ conversationId, type, name, at = ne
     name: name || baseId,
     lastActivityAt: at,
   };
-  saveActivityState(state, filePath);
+  stateCache.set(filePath, state);
+  scheduleActivityFlush(filePath, options);
 }
 
 export function recentActivityFor(conversationId, {

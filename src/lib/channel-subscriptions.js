@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { acquireTokenForScope, graphRequest } from './graph.js';
 import { buildGraphUrl } from './cloud.js';
+import { writeJsonAtomic } from './atomic-write.js';
 
 const SUBS_FILE = path.join(DATA_DIR, 'channel-subscriptions.json');
 const CLIENT_STATE_FILE = path.join(DATA_DIR, 'subscription-client-state');
@@ -50,9 +51,7 @@ function loadSubscriptions() {
 }
 
 function saveSubscriptions(subs) {
-  const tmp = SUBS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(subs, null, 2));
-  fs.renameSync(tmp, SUBS_FILE);
+  writeJsonAtomic(SUBS_FILE, subs, 0o600);
 }
 
 

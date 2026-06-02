@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { selectConfiguredEntry } from './allowlist.js';
 import { attachAllowlistResolution, loadAllowlistResolution } from './allowlist-resolution.js';
+import { writeJsonAtomic } from './atomic-write.js';
 
 const HOME = process.env.HOME;
 export const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -40,6 +41,7 @@ export const DEFAULT_CONFIG = {
 let config = null;
 let configWatcher = null;
 let configReloadTimer = null;
+let configWatcherActive = false;
 
 function normalizeConversationMap(value) {
   if (Array.isArray(value)) {
@@ -167,17 +169,12 @@ export function getConfig() {
 }
 
 export function saveConfig(newConfig) {
-  const tmpPath = CONFIG_PATH + '.tmp';
   try {
-    fs.writeFileSync(tmpPath, JSON.stringify(newConfig, null, 2));
-    fs.renameSync(tmpPath, CONFIG_PATH);
+    writeJsonAtomic(CONFIG_PATH, newConfig, 0o600);
     config = attachAllowlistResolution(newConfig, newConfig._allowlistResolution || loadAllowlistResolution());
     return true;
   } catch (err) {
     console.error(`[ms-teams] Failed to save config: ${err.message}`);
-    try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    } catch {}
     return false;
   }
 }
@@ -186,6 +183,7 @@ export function watchConfig(onChange) {
   if (configWatcher) {
     configWatcher.close();
   }
+  configWatcherActive = false;
   if (configReloadTimer) {
     clearTimeout(configReloadTimer);
     configReloadTimer = null;
@@ -195,9 +193,13 @@ export function watchConfig(onChange) {
   const configBase = path.basename(CONFIG_PATH);
 
   const scheduleReload = () => {
+    if (!configWatcherActive) return;
     if (configReloadTimer) clearTimeout(configReloadTimer);
     configReloadTimer = setTimeout(() => {
       configReloadTimer = null;
+      if (!configWatcherActive) {
+        return;
+      }
       if (!fs.existsSync(CONFIG_PATH)) {
         return;
       }
@@ -210,6 +212,7 @@ export function watchConfig(onChange) {
   };
 
   if (fs.existsSync(configDir)) {
+    configWatcherActive = true;
     configWatcher = fs.watch(configDir, (eventType, filename) => {
       if (filename && String(filename) === configBase) {
         scheduleReload();
@@ -225,11 +228,13 @@ export function watchConfig(onChange) {
         configWatcher.close();
       } catch {}
       configWatcher = null;
+      configWatcherActive = false;
     });
   }
 }
 
 export function stopWatching() {
+  configWatcherActive = false;
   if (configReloadTimer) {
     clearTimeout(configReloadTimer);
     configReloadTimer = null;
