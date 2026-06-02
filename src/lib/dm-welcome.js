@@ -22,6 +22,7 @@ export async function sendDmWelcomeIfFirstSeen({ ctx, aadObjectId, message, seen
   const userId = String(aadObjectId || '').trim();
   const welcome = String(message || '').trim();
   if (!userId || !welcome || seenUsers.has(userId)) return false;
+  // Mark before sending so concurrent deliveries for the same user do not all welcome.
   seenUsers.add(userId);
   save(seenUsers);
   await ctx.send(welcome).catch(() => {});

@@ -25,8 +25,10 @@ function walkAdaptiveNode(node, lines) {
 
   switch (node.type) {
     case 'TextBlock':
-    case 'RichTextBlock':
+    case 'TextRun':
       addLine(lines, node.text);
+      break;
+    case 'RichTextBlock':
       break;
     case 'FactSet':
       for (const fact of node.facts || []) {
@@ -53,7 +55,7 @@ function walkAdaptiveNode(node, lines) {
   walkAdaptiveNode(node.body, lines);
   walkAdaptiveNode(node.items, lines);
   walkAdaptiveNode(node.columns, lines);
-  walkAdaptiveNode(node.facts, lines);
+  walkAdaptiveNode(node.inlines, lines);
 }
 
 function extractAdaptiveCard(card) {

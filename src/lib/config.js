@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG = {
   dmAllowFrom: [],
   dmWelcomeMessage: '',
   voiceTranscription: 'auto',
+  whisperModel: '',
   groupPolicy: 'allowlist',
   groups: {},
   channels: {},

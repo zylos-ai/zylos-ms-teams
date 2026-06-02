@@ -1,7 +1,8 @@
 export function parseCardMarker(text) {
   const trimmed = String(text || '').trim();
-  if (!trimmed.startsWith('[CARD:') || !trimmed.endsWith(']')) return null;
-  const rawJson = trimmed.slice('[CARD:'.length, -1).trim();
+  const match = trimmed.match(/^\[CARD:([\s\S]+)\]$/);
+  if (!match) return null;
+  const rawJson = match[1].trim();
   if (!rawJson) throw new Error('empty CARD payload');
   const content = JSON.parse(rawJson);
   return {

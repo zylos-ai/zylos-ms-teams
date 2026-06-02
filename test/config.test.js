@@ -16,6 +16,7 @@ describe('mergeConfigWithDefaults', () => {
     expect(result.message.context_messages).toBe(10);
     expect(result.dmWelcomeMessage).toBe('');
     expect(result.voiceTranscription).toBe('auto');
+    expect(result.whisperModel).toBe('');
   });
 
   it('merges top-level overrides', () => {

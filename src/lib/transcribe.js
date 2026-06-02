@@ -31,7 +31,7 @@ function runCommand(command, args, timeout = 90_000) {
   });
 }
 
-export function getTranscriptionProvider(mode = 'auto', env = process.env) {
+export function getTranscriptionProvider(mode = 'auto', env = process.env, { modelPath = env.WHISPER_MODEL } = {}) {
   const normalized = String(mode || 'auto').trim().toLowerCase();
   if (normalized === 'disabled') return { available: false, provider: 'disabled' };
 
@@ -39,10 +39,10 @@ export function getTranscriptionProvider(mode = 'auto', env = process.env) {
     return { available: true, provider: 'external', command: EXTERNAL_TRANSCRIBE };
   }
   if ((normalized === 'auto' || normalized === 'local') && commandExists('whisper-cli')) {
-    return { available: true, provider: 'whisper.cpp', command: 'whisper-cli' };
+    if (modelPath) return { available: true, provider: 'whisper.cpp', command: 'whisper-cli', modelPath };
   }
   if ((normalized === 'auto' || normalized === 'local') && commandExists('whisper')) {
-    return { available: true, provider: 'whisper.cpp', command: 'whisper' };
+    if (modelPath) return { available: true, provider: 'whisper.cpp', command: 'whisper', modelPath };
   }
   if ((normalized === 'auto' || normalized === 'api') && env.OPENAI_API_KEY) {
     return { available: true, provider: 'openai-api' };
@@ -67,11 +67,11 @@ async function transcribeWithOpenAI(audioPath, apiKey) {
   return String(json.text || '').trim();
 }
 
-export async function transcribeAudio(audioPath, { mode = 'auto', env = process.env } = {}) {
-  const provider = getTranscriptionProvider(mode, env);
+export async function transcribeAudio(audioPath, { mode = 'auto', env = process.env, modelPath = env.WHISPER_MODEL } = {}) {
+  const provider = getTranscriptionProvider(mode, env, { modelPath });
   if (!provider.available) throw new Error('voice transcription unavailable');
   if (provider.provider === 'external') return runCommand(provider.command, [audioPath]);
-  if (provider.provider === 'whisper.cpp') return runCommand(provider.command, [audioPath]);
+  if (provider.provider === 'whisper.cpp') return runCommand(provider.command, ['--model', provider.modelPath, audioPath]);
   if (provider.provider === 'openai-api') return transcribeWithOpenAI(audioPath, env.OPENAI_API_KEY);
   throw new Error('voice transcription unavailable');
 }

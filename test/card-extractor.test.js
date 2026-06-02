@@ -21,6 +21,46 @@ describe('card extraction', () => {
     expect(text).toContain('receipt image');
   });
 
+  it('extracts RichTextBlock TextRun content', () => {
+    const text = extractCardText([{
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      content: {
+        body: [
+          {
+            type: 'RichTextBlock',
+            inlines: [
+              { type: 'TextRun', text: 'Rich' },
+              { type: 'TextRun', text: 'content' },
+            ],
+          },
+        ],
+      },
+    }]);
+
+    expect(text).toContain('[Adaptive Card: Rich]');
+    expect(text).toContain('Rich');
+    expect(text).toContain('content');
+  });
+
+  it('does not recurse into FactSet facts as arbitrary nodes', () => {
+    const text = extractCardText([{
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      content: {
+        body: [
+          {
+            type: 'FactSet',
+            facts: [
+              { title: 'Status', value: 'Approved', body: [{ type: 'TextBlock', text: 'unexpected nested text' }] },
+            ],
+          },
+        ],
+      },
+    }]);
+
+    expect(text).toContain('Status: Approved');
+    expect(text).not.toContain('unexpected nested text');
+  });
+
   it('extracts hero cards', () => {
     const text = extractCardText([{
       contentType: 'application/vnd.microsoft.card.hero',

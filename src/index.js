@@ -92,7 +92,7 @@ if (!config.enabled) {
   process.exit(0);
 }
 
-let transcriptionProvider = getTranscriptionProvider(config.voiceTranscription);
+let transcriptionProvider = getTranscriptionProvider(config.voiceTranscription, process.env, { modelPath: config.whisperModel || process.env.WHISPER_MODEL });
 let VOICE_ENABLED = transcriptionProvider.available;
 console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? `enabled (${transcriptionProvider.provider})` : 'disabled/unavailable'}`);
 
@@ -118,7 +118,7 @@ const mentions = createMentionHelpers(() => botId);
 watchConfig(async (newConfig) => {
   console.log('[ms-teams] Config reloaded');
   config = newConfig;
-  transcriptionProvider = getTranscriptionProvider(config.voiceTranscription);
+  transcriptionProvider = getTranscriptionProvider(config.voiceTranscription, process.env, { modelPath: config.whisperModel || process.env.WHISPER_MODEL });
   VOICE_ENABLED = transcriptionProvider.available;
   if (!newConfig.enabled) {
     console.log('[ms-teams] Component disabled, stopping...');
@@ -211,6 +211,10 @@ function stopTyping(conversationId) {
     clearInterval(interval);
     typingIntervals.delete(conversationId);
   }
+}
+
+async function sendInvokeResponse(ctx) {
+  await ctx.sendActivity({ type: 'invokeResponse', value: { status: 200, body: {} } });
 }
 
 function extractMessageContent(activity) {
@@ -324,18 +328,18 @@ async function handleMessage(ctx) {
       await access.bindOwner(senderAadObjectId, senderName);
     }
 
+    if (!access.isDmAllowed(senderAadObjectId)) {
+      logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
+      await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
+      return;
+    }
+
     await sendDmWelcomeIfFirstSeen({
       ctx,
       aadObjectId: senderAadObjectId,
       message: config.dmWelcomeMessage,
       seenUsers: seenDmUsers,
     });
-
-    if (!access.isDmAllowed(senderAadObjectId)) {
-      logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
-      await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
-      return;
-    }
 
     recordAccepted();
 
@@ -364,7 +368,7 @@ async function handleMessage(ctx) {
     });
     if (audioFile && VOICE_ENABLED) {
       try {
-        const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription });
+        const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription, modelPath: config.whisperModel || process.env.WHISPER_MODEL });
         console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
         const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
         startTyping(conversationId);
@@ -555,7 +559,7 @@ async function handleMessage(ctx) {
       });
       if (audioFile) {
         try {
-          const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription });
+          const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription, modelPath: config.whisperModel || process.env.WHISPER_MODEL });
           console.log(`[ms-teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
           cleanText = `[Voice] ${transcript}`;
           fs.unlink(audioFile.path, () => {});
@@ -785,9 +789,16 @@ async function handleMessageDelete(ctx) {
 
 async function handleInvoke(ctx) {
   const activity = ctx.activity;
-  if (!activity || isDuplicate(activityDedupKey(activity, 'invoke'))) return;
+  if (!activity) return;
+  if (isDuplicate(activityDedupKey(activity, 'invoke'))) {
+    await sendInvokeResponse(ctx);
+    return;
+  }
   await saveConvRef(activity, ctx.ref);
-  if (!isForwardAllowedForActivity(activity)) return;
+  if (!isForwardAllowedForActivity(activity)) {
+    await sendInvokeResponse(ctx);
+    return;
+  }
 
   const senderName = activity.from?.name || 'unknown';
   const senderAadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
@@ -796,6 +807,7 @@ async function handleInvoke(ctx) {
   const payload = extractCardActionPayload(activity);
   const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
   sendToC4('ms-teams', endpoint, cardActionMessage(senderName, payload));
+  await sendInvokeResponse(ctx);
 }
 
 teamsApp.on('message', async (ctx) => {
