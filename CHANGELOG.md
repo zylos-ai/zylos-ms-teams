@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-02
+
+### Fixed
+- DM reactions now work — chat ID constructed deterministically from user +
+  bot IDs instead of querying `/me/chats` with `installedApps` filter (which
+  required `TeamsAppInstallation.ReadForUser` permission we don't have)
+- Reaction types mapped to emoji characters for Graph chat API (`👍` instead
+  of `"like"`) — the channel API still uses string names
+- Trimmed `DELEGATED_SCOPES` to `Chat.ReadWrite ChannelMessage.Send
+  offline_access` — removed `ChannelMessage.Read.All` and `Files.Read.All`
+  (already covered by Application permissions)
+
+### Changed
+- Deployment guide: updated "No reaction support" limitation to document
+  delegated auth requirement and OAuth sign-in flow
+
 ## [0.1.5] - 2026-06-01
 
 ### Fixed
