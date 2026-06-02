@@ -26,11 +26,6 @@ export function loadActivityState(filePath = ACTIVITY_STATE_FILE) {
   return state;
 }
 
-export function saveActivityState(state, filePath = ACTIVITY_STATE_FILE) {
-  stateCache.set(filePath, state);
-  writeJsonAtomic(filePath, { conversations: state.conversations || {} }, 0o600);
-}
-
 function scheduleActivityFlush(filePath, { debounce = filePath === ACTIVITY_STATE_FILE } = {}) {
   if (!debounce) {
     flushActivityState(filePath);

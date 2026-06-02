@@ -1,10 +1,4 @@
-function normalize(value) {
-  return String(value || '').trim();
-}
-
-function normalizeName(value) {
-  return normalize(value).toLowerCase();
-}
+import { normalize, normalizeName } from './normalize.js';
 
 function hasGlob(value) {
   return normalize(value).includes('*') || normalize(value).includes('?');
