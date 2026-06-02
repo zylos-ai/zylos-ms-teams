@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-06-02
+
+### Fixed
+- Users now receive a notification when the agent is unreachable ("Sorry, I
+  could not process your message right now. Please try again.")
+- Unsupported message content (empty text + no media) now replies with a
+  helpful message instead of being silently dropped
+- Smart-mode unaddressed observations correctly stay silent for unsupported
+  content (no false replies)
+
+### Changed
+- Extracted C4 send/retry logic into `src/lib/c4.js` for testability
+
 ## [0.1.6] - 2026-06-02
 
 ### Fixed
