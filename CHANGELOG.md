@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-06-02
+## [0.1.8] - 2026-06-02
 
 ### Added
 - PR #6: Startup credential probe for Bot Framework credentials.
