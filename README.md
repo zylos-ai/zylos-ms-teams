@@ -28,6 +28,7 @@
 - **Chat on Teams** — your AI agent lives in Microsoft Teams, supporting DMs and group conversations
 - **Smart group monitoring** — automatically follow designated group discussions, no @mention needed
 - **Voice messages** — audio messages transcribed via ASR and forwarded as text
+- **Production controls** — sovereign cloud endpoints, diagnostics, inbound debouncing, reply style, DM pairing, disabled-DM mode, and welcome cards
 - **Zero-config start** — first DM auto-binds you as owner, no setup wizards
 
 ## Getting Started
@@ -65,7 +66,7 @@ zylos configure ms-teams
 
 This prompts for `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and optionally `MSTEAMS_TENANT_ID` and `MSTEAMS_PUBLIC_URL`, and stores them in the component config.
 
-> **Legacy fallback:** existing `~/zylos/.env` values are still read if not present in config.json.
+> **Legacy fallback:** existing `~/zylos/.env` values are still read if not present in config.json, including `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID`, `MSTEAMS_PUBLIC_URL`, `MSTEAMS_CLOUD`, and `MSTEAMS_APP_CATALOG_ID`.
 
 Get credentials from your Azure Bot Registration:
 - Azure Portal: [portal.azure.com](https://portal.azure.com) -> Bot Services
@@ -87,13 +88,25 @@ Config file: `~/zylos/components/ms-teams/config.json`
   "enabled": true,
   "port": 3978,
   "dmPolicy": "owner",
+  "dmDisabledMessage": "Sorry, I'm not available for private messages.",
+  "dmPairingPendingMessage": "Your DM access request has been sent for approval.",
+  "dmPairingDeniedMessage": "Sorry, your DM access request was denied.",
   "dmAllowFrom": [],
   "groupPolicy": "allowlist",
+  "cloud": "public",
+  "debounceMs": 0,
+  "replyStyle": "thread",
+  "voiceTranscription": "auto",
+  "promptStarters": ["What can you do?", "Help me draft a message", "Summarize a document"],
   "groups": {},
+  "channels": {},
   "owner": {
     "bound": false,
     "aadObjectId": "",
     "name": ""
+  },
+  "message": {
+    "context_messages": 10
   }
 }
 ```
@@ -121,10 +134,15 @@ $ADM show                                       # Show full config
 $ADM show-owner                                  # Show current owner
 
 # DM Access Control
-$ADM set-dm-policy <open|allowlist|owner>         # Set DM policy
+$ADM set-dm-policy <open|allowlist|owner|pairing|disabled> # Set DM policy
 $ADM list-dm-allow                                # Show DM policy + allowFrom list
 $ADM add-dm-allow <aad_object_id>                 # Add user to DM allowlist
 $ADM remove-dm-allow <aad_object_id>              # Remove user from DM allowlist
+$ADM dm-pending                                   # List pending DM pairing requests
+$ADM dm-approve <aad_object_id>                   # Approve pending DM access
+$ADM dm-deny <aad_object_id> [reason]             # Deny pending DM access
+$ADM set-dm-welcome <message>                     # Set first-contact DM welcome message
+$ADM show-dm-welcome                              # Show first-contact DM welcome message
 
 # Group Chat Management
 $ADM list-groups                                  # List all configured group chats
@@ -151,6 +169,7 @@ $ADM auth-url <base-url>                          # Generate sign-in URL
 $ADM auth-revoke <aad_object_id>                  # Revoke delegated auth
 
 # Graph API
+$ADM doctor                                       # Run configuration and connectivity diagnostics
 $ADM graph-status                                 # Show Graph API configuration
 $ADM set-teams-app-catalog-id <id>                # Set catalog ID (enables DM reactions)
 ```
@@ -164,6 +183,8 @@ Controls who can send direct messages to the bot:
 - `owner` (default) — Only the owner can DM
 - `allowlist` — Only users in `dmAllowFrom` can DM
 - `open` — Anyone can DM
+- `pairing` — Unknown users request owner approval before DM access
+- `disabled` — All DMs receive `dmDisabledMessage`
 
 ### Group Policy
 
@@ -189,6 +210,15 @@ Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every
 In smart mode without @mention:
 - Attachments are fetched on-demand via `download-attachments.js`
 - Agent sees the full conversation and can choose to skip
+
+## Production Controls
+
+- `cloud` selects Microsoft cloud endpoints (`public`, `gcc`, `gccHigh`, `dod`, `china`) for Bot Framework and Graph calls.
+- `doctor` checks credentials, Graph scopes, delegated auth, and cloud endpoint alignment.
+- `debounceMs` merges rapid inbound messages per conversation before forwarding to C4.
+- `replyStyle: "thread"` keeps replies in the triggering thread where supported; `"new"` sends new top-level messages.
+- `promptStarters`, `welcomeCardTitle`, and `dmWelcomeMessage` control welcome card and first-DM experiences.
+- Display-name, glob, and `group:<name>` allowlist entries are resolved through Graph when available and cached in `allowlist-resolution.json`.
 
 ## Message Routing
 
