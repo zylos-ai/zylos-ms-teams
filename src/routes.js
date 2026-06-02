@@ -9,6 +9,7 @@ import { getConversationReference } from './lib/conversation-store.js';
 import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
+import { recordSentMessage } from './lib/sent-message-cache.js';
 
 function sanitizePrefix(raw) {
   if (!raw) return '';
@@ -114,10 +115,13 @@ export function registerRoutes(expressApp, deps) {
           const errText = await apiRes.text();
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
+        const result = await apiRes.json().catch(() => ({}));
+        recordSentMessage(conversationId, result.id);
       } else {
         const activity = { type: 'message', text: text || '', textFormat: 'markdown' };
         if (attachments?.length) activity.attachments = attachments;
-        await teamsApp.send(baseConvId, activity);
+        const result = await teamsApp.send(baseConvId, activity);
+        recordSentMessage(baseConvId, result?.id || result?.activityId);
       }
 
       recordHistoryEntry(baseConvId, {

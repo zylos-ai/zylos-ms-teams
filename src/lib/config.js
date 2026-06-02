@@ -16,6 +16,8 @@ export const DEFAULT_CONFIG = {
   dmPolicy: 'owner',
   dmAllowFrom: [],
   dmWelcomeMessage: '',
+  promptStarters: ['What can you do?', 'Help me draft a message', 'Summarize a document'],
+  welcomeCardTitle: null,
   voiceTranscription: 'auto',
   whisperModel: '',
   groupPolicy: 'allowlist',
@@ -40,6 +42,10 @@ export function mergeConfigWithDefaults(parsed = {}) {
     },
     channels: parsed.channels || {},
     groups: parsed.groups || {},
+    promptStarters: Array.isArray(parsed.promptStarters)
+      ? parsed.promptStarters
+      : DEFAULT_CONFIG.promptStarters,
+    welcomeCardTitle: parsed.welcomeCardTitle ?? DEFAULT_CONFIG.welcomeCardTitle,
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})

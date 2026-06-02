@@ -1,0 +1,67 @@
+const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_ENTRIES = 100;
+
+const parentCache = new Map();
+const injectedParents = new Set();
+
+function normalizeId(value) {
+  return String(value || '').trim();
+}
+
+function cacheKey(teamId, channelId, messageId) {
+  return [teamId, channelId, messageId].map(normalizeId).join(':');
+}
+
+function injectionKey(conversationId, rootMessageId) {
+  const convId = normalizeId(conversationId).split(';')[0];
+  const rootId = normalizeId(rootMessageId) || normalizeId(conversationId).match(/;messageid=([^;]+)/)?.[1] || '';
+  return `${convId}:${rootId}`;
+}
+
+function pruneCache({ ttlMs = DEFAULT_TTL_MS, maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
+  const cutoff = Date.now() - ttlMs;
+  for (const [key, entry] of parentCache) {
+    if (entry.timestamp <= cutoff) parentCache.delete(key);
+  }
+  while (parentCache.size > maxEntries) {
+    const firstKey = parentCache.keys().next().value;
+    if (!firstKey) break;
+    parentCache.delete(firstKey);
+  }
+}
+
+export function shouldInjectThreadParent(conversationId, rootMessageId) {
+  const key = injectionKey(conversationId, rootMessageId);
+  return Boolean(key) && !injectedParents.has(key);
+}
+
+export function markThreadParentInjected(conversationId, rootMessageId) {
+  const key = injectionKey(conversationId, rootMessageId);
+  if (!key) return false;
+  injectedParents.add(key);
+  return true;
+}
+
+export async function getCachedThreadParent(teamId, channelId, messageId, fetcher, {
+  ttlMs = DEFAULT_TTL_MS,
+  maxEntries = DEFAULT_MAX_ENTRIES,
+} = {}) {
+  const key = cacheKey(teamId, channelId, messageId);
+  if (!key || key === '::') return null;
+  pruneCache({ ttlMs, maxEntries });
+
+  const cached = parentCache.get(key);
+  if (cached && cached.timestamp > Date.now() - ttlMs) {
+    return cached.value;
+  }
+
+  const value = await fetcher(teamId, channelId, messageId);
+  parentCache.set(key, { value, timestamp: Date.now() });
+  pruneCache({ ttlMs, maxEntries });
+  return value;
+}
+
+export function clearThreadParentCache() {
+  parentCache.clear();
+  injectedParents.clear();
+}

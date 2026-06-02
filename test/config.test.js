@@ -15,6 +15,8 @@ describe('mergeConfigWithDefaults', () => {
     expect(result.owner.bound).toBe(false);
     expect(result.message.context_messages).toBe(10);
     expect(result.dmWelcomeMessage).toBe('');
+    expect(result.promptStarters).toEqual(DEFAULT_CONFIG.promptStarters);
+    expect(result.welcomeCardTitle).toBeNull();
     expect(result.voiceTranscription).toBe('auto');
     expect(result.whisperModel).toBe('');
   });
@@ -49,6 +51,20 @@ describe('mergeConfigWithDefaults', () => {
   it('defaults channels to empty object when not provided', () => {
     const result = mergeConfigWithDefaults({ port: 3000 });
     expect(result.channels).toEqual({});
+  });
+
+  it('preserves configured prompt starters and welcome card title', () => {
+    const result = mergeConfigWithDefaults({
+      promptStarters: ['Draft a reply', 'Summarize this'],
+      welcomeCardTitle: 'Zylos',
+    });
+    expect(result.promptStarters).toEqual(['Draft a reply', 'Summarize this']);
+    expect(result.welcomeCardTitle).toBe('Zylos');
+  });
+
+  it('falls back to default prompt starters when configured value is invalid', () => {
+    const result = mergeConfigWithDefaults({ promptStarters: 'hello' });
+    expect(result.promptStarters).toEqual(DEFAULT_CONFIG.promptStarters);
   });
 });
 
