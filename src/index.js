@@ -45,6 +45,7 @@ import { buildPairingNotification, getPairingStatus, loadPairingState, markPairi
 import { recordConversationActivity } from './lib/activity-store.js';
 import { selectConfiguredEntry } from './lib/allowlist.js';
 import { allowlistResolutionIntervalMs, refreshAllowlistResolution } from './lib/allowlist-resolution.js';
+import { probeCloudEndpoint } from './lib/cloud.js';
 
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
@@ -192,6 +193,20 @@ async function probeDelegatedAuthAtStartup() {
     }
   } catch (err) {
     console.warn(`[ms-teams] Delegated auth probe failed: ${err.message}`);
+  }
+}
+
+async function probeCloudAtStartup() {
+  if (!credentials.tenantId) return;
+  try {
+    const probe = await probeCloudEndpoint({
+      tenantId: credentials.tenantId,
+      cloud: config.cloud || 'public',
+    });
+    const level = probe.ok ? 'log' : 'warn';
+    console[level](`[ms-teams] Cloud endpoint probe: ${probe.detail}`);
+  } catch (err) {
+    console.warn(`[ms-teams] Cloud endpoint probe failed: ${err.message}`);
   }
 }
 
@@ -514,6 +529,11 @@ async function handleMessage(ctx) {
         }
         logRejection('dmPolicy=pairing pending');
         await ctx.send(config.dmPairingPendingMessage || 'Your DM access request has been sent for approval.');
+        return;
+      }
+      if ((config.dmPolicy || 'owner') === 'disabled') {
+        logRejection('dmPolicy=disabled');
+        await ctx.send(config.dmDisabledMessage || "Sorry, I'm not available for private messages.");
         return;
       }
       logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
@@ -1270,6 +1290,7 @@ async function initChannelSubscriptions() {
 
 (async () => {
   void probeBotCredentials();
+  void probeCloudAtStartup();
   void probeGraphScopes();
   void probeDelegatedAuthAtStartup();
   restartAllowlistRefresh();

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { getConfig, getCredentials, getPublicUrl } from './lib/config.js';
+import { getConfig, getCredentials, getPublicUrl, resolveRouteConfig } from './lib/config.js';
 import { escapeHtml } from './lib/format.js';
 import { getConversationReference } from './lib/conversation-store.js';
 import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
@@ -91,8 +91,10 @@ export function registerRoutes(expressApp, deps) {
         return res.status(404).json({ error: 'no conversation reference found' });
       }
 
+      const routeConfig = resolveRouteConfig(type || 'dm', conversationId, getConfig());
+      const effectiveReplyToId = routeConfig.replyStyle === 'new' ? '' : replyToId;
       let activityId = '';
-      const useBotConnector = returnActivityId || (type === 'channel' && replyToId && reference.serviceUrl);
+      const useBotConnector = returnActivityId || (type === 'channel' && effectiveReplyToId && reference.serviceUrl);
 
       if (useBotConnector) {
         if (!reference.serviceUrl) {
@@ -106,7 +108,7 @@ export function registerRoutes(expressApp, deps) {
           textFormat: 'markdown',
           conversation: { id: type === 'channel' ? conversationId : baseConvId },
         };
-        if (type === 'channel' && replyToId) activity.replyToId = replyToId;
+        if (type === 'channel' && effectiveReplyToId) activity.replyToId = effectiveReplyToId;
         if (attachments?.length) activity.attachments = attachments;
         const targetConvId = type === 'channel' ? conversationId : baseConvId;
         const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(targetConvId)}/activities`;

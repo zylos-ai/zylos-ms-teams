@@ -30,9 +30,10 @@ export function createAccessControl(getConfigFn, getCredentialsFn) {
   }
 
   function isDmAllowed(aadObjectId, displayName = '') {
-    if (isOwner(aadObjectId)) return true;
     const config = getConfigFn();
     const policy = config.dmPolicy || 'owner';
+    if (policy === 'disabled') return false;
+    if (isOwner(aadObjectId)) return true;
     if (policy === 'open') return true;
     if (policy === 'owner') return false;
     return allowlistMatches(config.dmAllowFrom || [], {

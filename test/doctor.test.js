@@ -19,6 +19,7 @@ describe('doctor', () => {
     const subscriptionsProvider = vi.fn().mockReturnValue({ ch1: { id: 'sub-1' } });
 
     const delegatedAuthProbe = vi.fn().mockResolvedValue({ configured: false, results: [] });
+    const cloudProbe = vi.fn().mockResolvedValue({ ok: true, detail: 'public login metadata matches login.microsoftonline.com' });
 
     const results = await runDoctor({
       enabled: true,
@@ -26,7 +27,7 @@ describe('doctor', () => {
       port: 3978,
       channels: { ch1: { mode: 'smart', teamId: 'team-1' } },
       groups: { '19:group@thread.v2': { name: 'Group' } },
-    }, { fetchImpl, tokenProbe, delegatedAuthProbe, subscriptionsProvider });
+    }, { fetchImpl, tokenProbe, delegatedAuthProbe, cloudProbe, subscriptionsProvider });
 
     expect(results.some(result => result.name === 'component enabled' && result.ok)).toBe(true);
     expect(results.some(result => result.name === 'local service health' && result.ok)).toBe(true);
@@ -43,6 +44,7 @@ describe('doctor', () => {
       fetchImpl: vi.fn().mockRejectedValue(new Error('offline')),
       tokenProbe: vi.fn(),
       delegatedAuthProbe: vi.fn().mockResolvedValue({ configured: false, results: [] }),
+      cloudProbe: vi.fn().mockResolvedValue({ ok: true, detail: 'public login metadata matches login.microsoftonline.com' }),
       subscriptionsProvider: vi.fn().mockReturnValue({}),
     });
 
@@ -70,6 +72,7 @@ describe('doctor', () => {
     }, {
       fetchImpl: vi.fn().mockResolvedValue({ ok: true, status: 200 }),
       tokenProbe: vi.fn().mockResolvedValue(token),
+      cloudProbe: vi.fn().mockResolvedValue({ ok: false, detail: 'configured public expects login.microsoftonline.com; got login.microsoftonline.us' }),
       delegatedAuthProbe: vi.fn().mockResolvedValue({
         configured: true,
         results: [{ aadObjectId: 'aad-1', displayName: 'Felix Lin', ok: true, detail: 'delegated token acquired' }],
@@ -80,6 +83,9 @@ describe('doctor', () => {
     const scopeAudit = results.find(result => result.name === 'Graph scope audit');
     expect(scopeAudit.ok).toBe(false);
     expect(scopeAudit.detail).toContain('ChannelMessage.Read.All');
+    const cloudProbeResult = results.find(result => result.name === 'cloud endpoint probe');
+    expect(cloudProbeResult.ok).toBe(false);
+    expect(cloudProbeResult.detail).toContain('login.microsoftonline.us');
     expect(results.some(result => result.name === 'Delegated auth probe: Felix Lin' && result.ok)).toBe(true);
   });
 });

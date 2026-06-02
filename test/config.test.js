@@ -15,6 +15,8 @@ describe('mergeConfigWithDefaults', () => {
     expect(result.owner.bound).toBe(false);
     expect(result.message.context_messages).toBe(10);
     expect(result.dmWelcomeMessage).toBe('');
+    expect(result.dmDisabledMessage).toBe("Sorry, I'm not available for private messages.");
+    expect(result.replyStyle).toBe('thread');
     expect(result.promptStarters).toEqual(DEFAULT_CONFIG.promptStarters);
     expect(result.welcomeCardTitle).toBeNull();
     expect(result.voiceTranscription).toBe('auto');
@@ -53,6 +55,11 @@ describe('mergeConfigWithDefaults', () => {
     expect(result.channels).toEqual({});
   });
 
+  it('normalizes replyStyle', () => {
+    expect(mergeConfigWithDefaults({ replyStyle: 'new' }).replyStyle).toBe('new');
+    expect(mergeConfigWithDefaults({ replyStyle: 'top-level' }).replyStyle).toBe('thread');
+  });
+
   it('preserves configured prompt starters and welcome card title', () => {
     const result = mergeConfigWithDefaults({
       promptStarters: ['Draft a reply', 'Summarize this'],
@@ -73,7 +80,7 @@ describe('resolveRouteConfig', () => {
     const config = { channels: {}, groups: {} };
     const result = resolveRouteConfig('channel', 'ch-unknown', config);
     expect(result.requireMention).toBe(true);
-    expect(result.replyStyle).toBe('top-level');
+    expect(result.replyStyle).toBe('thread');
     expect(result.allowFrom).toEqual([]);
   });
 
@@ -84,6 +91,11 @@ describe('resolveRouteConfig', () => {
     const result = resolveRouteConfig('channel', 'ch-1', config);
     expect(result.requireMention).toBe(false);
     expect(result.replyStyle).toBe('thread');
+  });
+
+  it('applies global reply style to route config', () => {
+    const result = resolveRouteConfig('channel', 'ch-unknown', { replyStyle: 'new', channels: {}, groups: {} });
+    expect(result.replyStyle).toBe('new');
   });
 
   it('resolves channel allowFrom', () => {
@@ -122,6 +134,14 @@ describe('resolveRouteConfig', () => {
     };
     const result = resolveRouteConfig('group', 'grp-1', config);
     expect(result.allowFrom).toEqual(['user-x']);
+  });
+
+  it('resolves group replyStyle', () => {
+    const config = {
+      groups: { 'grp-1': { replyStyle: 'new' } },
+    };
+    const result = resolveRouteConfig('group', 'grp-1', config);
+    expect(result.replyStyle).toBe('new');
   });
 
   it('returns default allowFrom for group with no config', () => {

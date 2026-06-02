@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DATA_DIR, getCredentials, getPublicUrl } from './config.js';
 import { isGraphEnabled, acquireTokenForScope, probeGraphToken } from './graph.js';
 import { getActiveSubscriptions } from './channel-subscriptions.js';
-import { getCloudConfig } from './cloud.js';
+import { getCloudConfig, probeCloudEndpoint } from './cloud.js';
 import { probeDelegatedAuth } from './delegated-auth.js';
 
 function check(name, ok, detail = '') {
@@ -25,6 +25,7 @@ export async function runDoctor(config, {
   tokenProbe = acquireTokenForScope,
   graphTokenProbe = probeGraphToken,
   delegatedAuthProbe = probeDelegatedAuth,
+  cloudProbe = probeCloudEndpoint,
   subscriptionsProvider = getActiveSubscriptions,
 } = {}) {
   const credentials = getCredentials();
@@ -37,6 +38,17 @@ export async function runDoctor(config, {
   results.push(check('app password', !!credentials.appPassword, credentials.appPassword ? 'configured' : 'missing'));
   results.push(check('tenant id', !!credentials.tenantId, credentials.tenantId ? 'configured' : 'missing'));
   results.push(check('Graph configuration', isGraphEnabled(), isGraphEnabled() ? 'enabled' : 'requires appId, appPassword, tenantId'));
+
+  try {
+    const cloudProbeResult = await cloudProbe({
+      tenantId: credentials.tenantId,
+      cloud: config.cloud || 'public',
+      fetchImpl,
+    });
+    results.push(check('cloud endpoint probe', cloudProbeResult.ok, cloudProbeResult.detail));
+  } catch (err) {
+    results.push(check('cloud endpoint probe', false, err.message));
+  }
 
   if (credentials.appId && credentials.appPassword && credentials.tenantId) {
     try {

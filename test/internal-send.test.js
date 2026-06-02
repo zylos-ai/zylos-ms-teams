@@ -4,6 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getConversationReference: vi.fn(),
   acquireTokenForScope: vi.fn(),
+  config: {
+    enabled: true,
+    replyStyle: 'thread',
+    channels: {},
+    groups: {},
+    message: { context_messages: 10 },
+  },
 }));
 
 vi.mock('../src/lib/conversation-store.js', () => ({
@@ -14,6 +21,16 @@ vi.mock('../src/lib/graph.js', () => ({
   isGraphEnabled: vi.fn(() => false),
   acquireTokenForScope: mocks.acquireTokenForScope,
 }));
+
+vi.mock('../src/lib/config.js', async () => {
+  const actual = await vi.importActual('../src/lib/config.js');
+  return {
+    ...actual,
+    getConfig: () => mocks.config,
+    getCredentials: () => ({ appId: '', appPassword: '', tenantId: '' }),
+    getPublicUrl: () => '',
+  };
+});
 
 import { registerRoutes } from '../src/routes.js';
 
@@ -47,6 +64,13 @@ describe('internal send route', () => {
   beforeEach(() => {
     mocks.getConversationReference.mockReset();
     mocks.acquireTokenForScope.mockReset();
+    mocks.config = {
+      enabled: true,
+      replyStyle: 'thread',
+      channels: {},
+      groups: {},
+      message: { context_messages: 10 },
+    };
   });
 
   afterEach(async () => {
@@ -106,5 +130,54 @@ describe('internal send route', () => {
       user_name: 'Zylos',
       text: 'hello',
     }));
+  });
+
+  it('omits replyToId when route replyStyle is new', async () => {
+    mocks.config = {
+      enabled: true,
+      replyStyle: 'thread',
+      channels: { 'conv-1': { replyStyle: 'new' } },
+      groups: {},
+      message: { context_messages: 10 },
+    };
+    const deps = baseDeps();
+    mocks.getConversationReference.mockResolvedValue({
+      serviceUrl: 'https://service.example',
+    });
+    mocks.acquireTokenForScope.mockResolvedValue('bot-token');
+    let postedActivity;
+    globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).startsWith('http://127.0.0.1:')) {
+        return realFetch(url, options);
+      }
+      postedActivity = JSON.parse(options.body);
+      return new Response(JSON.stringify({ id: 'activity-456' }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const app = express();
+    registerRoutes(app, deps);
+    server = await listen(app);
+    const { port } = server.address();
+
+    const response = await realFetch(`http://127.0.0.1:${port}/internal/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Token': 'test-token',
+      },
+      body: JSON.stringify({
+        conversationId: 'conv-1',
+        text: 'hello',
+        type: 'channel',
+        replyToId: 'parent-1',
+        returnActivityId: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(postedActivity).not.toHaveProperty('replyToId');
   });
 });
