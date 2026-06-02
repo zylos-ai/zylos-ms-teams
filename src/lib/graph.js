@@ -71,6 +71,29 @@ function acquireBotToken() {
   return acquireTokenForScope('botframework');
 }
 
+export function decodeJwtPayload(token = '') {
+  try {
+    const payload = String(token).split('.')[1];
+    if (!payload) return {};
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+export function tokenScopes(token = '') {
+  const payload = decodeJwtPayload(token);
+  const scopes = payload.scp
+    ? String(payload.scp).split(/\s+/).filter(Boolean)
+    : [];
+  const roles = Array.isArray(payload.roles) ? payload.roles : [];
+  return [...new Set([...scopes, ...roles].filter(Boolean))].sort();
+}
+
+function escapeODataString(value) {
+  return String(value || '').replace(/'/g, "''");
+}
+
 export async function graphRequest(urlPath, options = {}) {
   const token = await acquireToken();
   const url = buildGraphUrl(urlPath, getConfig().cloud);
@@ -98,6 +121,14 @@ export async function graphRequest(urlPath, options = {}) {
     return res.json();
   }
   return res;
+}
+
+export async function probeGraphToken({ tokenProvider = acquireTokenForScope } = {}) {
+  const token = await tokenProvider('graph');
+  return {
+    token,
+    scopes: tokenScopes(token),
+  };
 }
 
 /**
@@ -179,6 +210,27 @@ export async function getThreadMessages(conversationId, replyToId, limit = 5, {
   const resolvedTeamId = teamId || getConfig().channels?.[resolvedChannelId]?.teamId || '';
   if (!threadRootId || !resolvedTeamId || !resolvedChannelId) return [];
   return fetchChannelHistory(resolvedTeamId, resolvedChannelId, limit, threadRootId, delegatedToken);
+}
+
+export async function findUsersByDisplayName(displayName, limit = 5) {
+  if (!isGraphEnabled()) return [];
+  const filter = encodeURIComponent(`displayName eq '${escapeODataString(displayName)}'`);
+  const data = await graphRequest(`/users?$filter=${filter}&$select=id,displayName&$top=${limit}`);
+  return (data.value || []).map(user => ({
+    id: user.id || '',
+    displayName: user.displayName || '',
+  })).filter(user => user.id);
+}
+
+export async function getGroupMembersByName(groupName) {
+  if (!isGraphEnabled()) return [];
+  const filter = encodeURIComponent(`displayName eq '${escapeODataString(groupName)}'`);
+  const groups = await graphRequest(`/groups?$filter=${filter}&$select=id,displayName&$top=1`);
+  const group = groups.value?.[0];
+  if (!group?.id) return [];
+
+  const members = await graphRequest(`/groups/${encodeURIComponent(group.id)}/members?$select=id,displayName&$top=999`);
+  return (members.value || []).map(member => member.id).filter(Boolean);
 }
 
 function formatGraphMessage(msg) {

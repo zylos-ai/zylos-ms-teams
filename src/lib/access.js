@@ -1,4 +1,5 @@
 import { saveConfig } from './config.js';
+import { allowlistMatches, isConfiguredConversation, routeAllowlistMatches, selectConfiguredEntry } from './allowlist.js';
 
 export function stripThreadId(conversationId) {
   return conversationId.split(';')[0];
@@ -28,14 +29,16 @@ export function createAccessControl(getConfigFn, getCredentialsFn) {
     return String(config.owner.aadObjectId) === String(aadObjectId);
   }
 
-  function isDmAllowed(aadObjectId) {
+  function isDmAllowed(aadObjectId, displayName = '') {
     if (isOwner(aadObjectId)) return true;
     const config = getConfigFn();
     const policy = config.dmPolicy || 'owner';
     if (policy === 'open') return true;
     if (policy === 'owner') return false;
-    const allowFrom = (config.dmAllowFrom || []).map(String);
-    return allowFrom.includes(String(aadObjectId));
+    return allowlistMatches(config.dmAllowFrom || [], {
+      aadObjectId,
+      displayName,
+    }, config._allowlistResolution || {});
   }
 
   function isConversationAllowed(convType, conversationId) {
@@ -43,27 +46,30 @@ export function createAccessControl(getConfigFn, getCredentialsFn) {
     const groupPolicy = config.groupPolicy || 'allowlist';
     if (groupPolicy === 'disabled') return false;
     if (groupPolicy === 'open') return true;
-    const baseId = stripThreadId(conversationId);
     if (convType === 'channel') {
-      const channels = config.channels || {};
-      return !!channels[conversationId] || !!channels[baseId];
+      return isConfiguredConversation(config.channels || {}, conversationId);
     }
-    const groups = config.groups || {};
-    return !!groups[conversationId] || !!groups[baseId];
+    return isConfiguredConversation(config.groups || {}, conversationId);
   }
 
   function getConversationName(convType, conversationId) {
     const config = getConfigFn();
-    const baseId = stripThreadId(conversationId);
     if (convType === 'channel') {
       const channels = config.channels || {};
-      return channels[conversationId]?.name || channels[baseId]?.name || conversationId;
+      const cfg = selectConfiguredEntry(channels, conversationId);
+      return cfg?.name || conversationId;
     }
     const groups = config.groups || {};
-    return groups[conversationId]?.name || groups[baseId]?.name || conversationId;
+    const cfg = selectConfiguredEntry(groups, conversationId);
+    return cfg?.name || conversationId;
   }
 
-  return { bindOwner, isOwner, isDmAllowed, isConversationAllowed, getConversationName };
+  function isRouteAllowed(routeConfig, { aadObjectId = '', displayName = '' } = {}) {
+    const config = getConfigFn();
+    return routeAllowlistMatches(routeConfig, { aadObjectId, displayName }, config._allowlistResolution || {});
+  }
+
+  return { bindOwner, isOwner, isDmAllowed, isConversationAllowed, getConversationName, isRouteAllowed };
 }
 
 export function createMentionHelpers(getBotIdFn) {
