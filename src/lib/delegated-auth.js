@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getCredentials, getTeamsAppCatalogId, DATA_DIR } from './config.js';
+import { getCredentials, DATA_DIR } from './config.js';
 import { writeJsonAtomic } from './atomic-write.js';
 import { extractChannelIds } from './format.js';
 
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
 const AUTH_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize';
 const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
-const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send ChannelMessage.Read.All Files.Read.All offline_access';
+const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send offline_access';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 let tokens = {};
@@ -192,52 +192,27 @@ export function revokeAuth(aadObjectId) {
 
 // ── Graph Chat ID Resolution ──
 
-const chatIdCache = new Map();
-const CHAT_ID_CACHE_MAX = 200;
+function resolveGraphChatId(aadObjectId) {
+  const creds = getCredentials();
+  if (!creds.appId) return null;
+  return `19:${aadObjectId}_${creds.appId}@unq.gbl.spaces`;
+}
 
-async function resolveGraphChatId(aadObjectId, conversationId) {
-  const catalogId = getTeamsAppCatalogId();
-  if (!catalogId) {
-    console.debug('[ms-teams/delegated-auth] DM chat resolution skipped: teamsAppCatalogId not configured');
-    return null;
-  }
+// ── Reaction Type Mapping ──
+// Graph chat API requires emoji characters; channel API accepts string names.
 
-  if (chatIdCache.has(conversationId)) return chatIdCache.get(conversationId);
+const REACTION_EMOJI = {
+  like: '\u{1F44D}',
+  heart: '\u{2764}\u{FE0F}',
+  laugh: '\u{1F606}',
+  surprised: '\u{1F62E}',
+  sad: '\u{1F622}',
+  angry: '\u{1F621}',
+};
 
-  const token = await getDelegatedToken(aadObjectId);
-  if (!token) return null;
-
-  const filter = encodeURIComponent(`installedApps/any(a:a/teamsApp/id eq '${catalogId}')`);
-  const res = await fetch(`${GRAPH_BASE}/me/chats?$filter=${filter}&$select=id,chatType`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    console.warn(`[ms-teams/delegated-auth] Failed to list chats (${res.status}): ${errText}`);
-    return null;
-  }
-
-  const data = await res.json();
-  const oneOnOneChats = (data.value || []).filter(c => c.chatType === 'oneOnOne');
-  console.debug(`[ms-teams/delegated-auth] Installed-app filter returned ${data.value?.length || 0} chats, ${oneOnOneChats.length} oneOnOne`);
-
-  if (oneOnOneChats.length !== 1) {
-    if (oneOnOneChats.length === 0) {
-      console.debug('[ms-teams/delegated-auth] No oneOnOne chats found with installed app');
-    } else {
-      console.debug(`[ms-teams/delegated-auth] Ambiguous: ${oneOnOneChats.length} oneOnOne chats found, skipping DM reaction`);
-    }
-    return null;
-  }
-
-  const chat = oneOnOneChats[0];
-  if (chatIdCache.size >= CHAT_ID_CACHE_MAX) {
-    const oldest = chatIdCache.keys().next().value;
-    chatIdCache.delete(oldest);
-  }
-  chatIdCache.set(conversationId, chat.id);
-  return chat.id;
+function toReactionType(reactionType, conversationType) {
+  if (conversationType === 'channel') return reactionType;
+  return REACTION_EMOJI[reactionType] || reactionType;
 }
 
 // ── Reaction API ──
@@ -255,7 +230,7 @@ async function resolveReactionUrl(aadObjectId, conversationType, conversationId,
   if (conversationType === 'group') {
     graphChatId = conversationId;
   } else {
-    graphChatId = await resolveGraphChatId(aadObjectId, conversationId);
+    graphChatId = resolveGraphChatId(aadObjectId);
     if (!graphChatId) return null;
   }
   return `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/${verb}`;
@@ -267,7 +242,7 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
 
   const url = await resolveReactionUrl(aadObjectId, conversationType, conversationId, messageId, 'set', activity);
   if (!url) {
-    console.debug(`[ms-teams/delegated-auth] DM reaction skipped: no reliable chat mapping for ${conversationId}`);
+    console.debug(`[ms-teams/delegated-auth] DM reaction skipped: could not resolve chat ID for ${conversationId}`);
     return;
   }
 
@@ -276,13 +251,14 @@ export async function sendReaction({ aadObjectId, conversationType, conversation
     console.debug(`[ms-teams/delegated-auth] Channel reaction: teamId=${teamId}, channelId=${channelId}, msgId=${messageId}`);
   }
 
+  const mappedType = toReactionType(reactionType, conversationType);
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ reactionType }),
+    body: JSON.stringify({ reactionType: mappedType }),
     signal: AbortSignal.timeout(15_000),
   });
 
@@ -299,17 +275,18 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
 
   const url = await resolveReactionUrl(aadObjectId, conversationType, conversationId, messageId, 'remove', activity);
   if (!url) {
-    console.debug(`[ms-teams/delegated-auth] DM reaction removal skipped: no reliable chat mapping for ${conversationId}`);
+    console.debug(`[ms-teams/delegated-auth] DM reaction removal skipped: could not resolve chat ID for ${conversationId}`);
     return;
   }
 
+  const mappedType = toReactionType(reactionType, conversationType);
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ reactionType }),
+    body: JSON.stringify({ reactionType: mappedType }),
     signal: AbortSignal.timeout(15_000),
   });
 
@@ -322,4 +299,4 @@ export async function removeReaction({ aadObjectId, conversationType, conversati
 
 function _setTokensForTest(data) { tokens = data; }
 
-export { resolveGraphChatId as _resolveGraphChatId, chatIdCache as _chatIdCache, _setTokensForTest };
+export { resolveGraphChatId as _resolveGraphChatId, _setTokensForTest };
