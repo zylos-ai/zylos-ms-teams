@@ -49,7 +49,11 @@ import { probeCloudEndpoint } from './lib/cloud.js';
 
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
+const REACTION_CONTEXT_TTL_MS = 10 * 60_000;
+const REACTION_CONTEXT_MAX_ENTRIES = 5000;
+const PENDING_REACTION_TTL_MS = 60 * 60_000;
 const reactionContextCache = new Map();
+const reactionContextTimers = new Map();
 const pendingReactions = new Map();
 const typingIntervals = new Map();
 
@@ -57,12 +61,61 @@ const typingIntervals = new Map();
 try {
   const cached = JSON.parse(fs.readFileSync(REACTION_CACHE_FILE, 'utf8'));
   for (const [k, v] of Object.entries(cached)) reactionContextCache.set(k, v);
+  pruneReactionContextCache();
 } catch {}
+
+function pruneReactionContextCache() {
+  while (reactionContextCache.size > REACTION_CONTEXT_MAX_ENTRIES) {
+    const oldestKey = reactionContextCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    reactionContextCache.delete(oldestKey);
+    const timer = reactionContextTimers.get(oldestKey);
+    if (timer) clearTimeout(timer);
+    reactionContextTimers.delete(oldestKey);
+  }
+}
 
 function persistReactionCache() {
   try {
+    pruneReactionContextCache();
     writeJsonAtomic(REACTION_CACHE_FILE, Object.fromEntries(reactionContextCache));
   } catch {}
+}
+
+function rememberReactionContext(messageId, channelData) {
+  if (!messageId) return;
+  const existingTimer = reactionContextTimers.get(messageId);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  reactionContextCache.set(messageId, extractChannelIds(channelData));
+  pruneReactionContextCache();
+  persistReactionCache();
+
+  const timer = setTimeout(() => {
+    reactionContextCache.delete(messageId);
+    reactionContextTimers.delete(messageId);
+    persistReactionCache();
+  }, REACTION_CONTEXT_TTL_MS);
+  timer.unref?.();
+  reactionContextTimers.set(messageId, timer);
+}
+
+function sweepPendingReactions(now = Date.now()) {
+  for (const [conversationId, entries] of pendingReactions) {
+    const fresh = entries.filter(entry => now - (entry.createdAt || now) <= PENDING_REACTION_TTL_MS);
+    if (fresh.length > 0) {
+      pendingReactions.set(conversationId, fresh);
+    } else {
+      pendingReactions.delete(conversationId);
+    }
+  }
+}
+
+function addPendingReaction(conversationId, entry) {
+  if (!conversationId) return;
+  sweepPendingReactions();
+  if (!pendingReactions.has(conversationId)) pendingReactions.set(conversationId, []);
+  pendingReactions.get(conversationId).push({ ...entry, createdAt: Date.now() });
 }
 
 const TOKEN_FILE = path.join(DATA_DIR, '.internal-token');
@@ -91,6 +144,11 @@ function isDuplicate(activityId) {
 const dedupCleanupInterval = setInterval(() => {
   messageDeduper.sweepExpired();
 }, MESSAGE_DEDUP_TTL_MS);
+
+const pendingReactionCleanupInterval = setInterval(() => {
+  sweepPendingReactions();
+}, 60_000);
+pendingReactionCleanupInterval.unref?.();
 
 // Load configuration
 let config = getConfig();
@@ -277,6 +335,7 @@ function notifyPairingRequest({ userId, userName, conversationId, firstMessage }
 // ── Express + HTTP Server ──
 
 const expressApp = express();
+expressApp.set('trust proxy', 'loopback');
 
 if (credentials.appId) {
   const jwtMiddleware = createJwtMiddleware({
@@ -553,8 +612,7 @@ async function handleMessage(ctx) {
     {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
       if (reactUser) {
-        if (!pendingReactions.has(conversationId)) pendingReactions.set(conversationId, []);
-        pendingReactions.get(conversationId).push({ messageId: activityId, conversationType: convType, activity });
+        addPendingReaction(conversationId, { messageId: activityId, conversationType: convType, activity });
         sendReaction({
           aadObjectId: reactUser,
           conversationType: convType,
@@ -654,12 +712,9 @@ async function handleMessage(ctx) {
       const reactUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
       if (reactUser) {
         if (convType === 'channel') {
-          reactionContextCache.set(activityId, extractChannelIds(activity?.channelData));
-          persistReactionCache();
-          setTimeout(() => { reactionContextCache.delete(activityId); persistReactionCache(); }, 10 * 60_000);
+          rememberReactionContext(activityId, activity?.channelData);
         }
-        if (!pendingReactions.has(conversationId)) pendingReactions.set(conversationId, []);
-        pendingReactions.get(conversationId).push({ messageId: activityId, conversationType: convType, activity });
+        addPendingReaction(conversationId, { messageId: activityId, conversationType: convType, activity });
         sendReaction({
           aadObjectId: reactUser,
           conversationType: convType,
@@ -1182,10 +1237,13 @@ function shutdown() {
   isShuttingDown = true;
   console.log('[ms-teams] Shutting down...');
   clearInterval(dedupCleanupInterval);
+  clearInterval(pendingReactionCleanupInterval);
   stopRenewalLoop();
   stopWatching();
   for (const interval of typingIntervals.values()) clearInterval(interval);
   typingIntervals.clear();
+  for (const timer of reactionContextTimers.values()) clearTimeout(timer);
+  reactionContextTimers.clear();
   if (allowlistRefreshInterval) clearInterval(allowlistRefreshInterval);
 
   const finishExit = () => process.exit(0);

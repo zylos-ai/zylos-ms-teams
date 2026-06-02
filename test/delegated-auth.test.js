@@ -14,7 +14,7 @@ vi.mock('../src/lib/atomic-write.js', () => ({
   writeJsonAtomic: vi.fn(),
 }));
 
-const { buildAuthUrl, consumeState, _resolveGraphChatId, _setTokensForTest } = await import('../src/lib/delegated-auth.js');
+const { buildAuthUrl, consumeState, getDelegatedToken, _resolveGraphChatId, _setTokensForTest } = await import('../src/lib/delegated-auth.js');
 
 function injectToken(aadObjectId = 'test-user') {
   _setTokensForTest({
@@ -72,5 +72,41 @@ describe('resolveGraphChatId', () => {
     expect(result1).not.toBe(result2);
     expect(result1).toBe('19:user-a_test-app-id@unq.gbl.spaces');
     expect(result2).toBe('19:user-b_test-app-id@unq.gbl.spaces');
+  });
+});
+
+describe('getDelegatedToken refresh coalescing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('coalesces concurrent refreshes for the same user', async () => {
+    _setTokensForTest({
+      'test-user': {
+        accessToken: 'expired-token',
+        refreshToken: 'refresh-token',
+        expiresAt: Date.now() - 1000,
+        displayName: 'Test User',
+      },
+    });
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        access_token: 'fresh-token',
+        refresh_token: 'fresh-refresh-token',
+        expires_in: 3600,
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [first, second] = await Promise.all([
+      getDelegatedToken('test-user'),
+      getDelegatedToken('test-user'),
+    ]);
+
+    expect(first).toBe('fresh-token');
+    expect(second).toBe('fresh-token');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

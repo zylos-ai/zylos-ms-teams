@@ -53,15 +53,7 @@ export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'publi
     });
   }
 
-  // Build accepted issuers list
-  const acceptedIssuers = [cloud.botFrameworkIssuer, cloud.legacyStsIssuer].filter(Boolean);
-  if (tenantId) {
-    acceptedIssuers.push(getEntraIssuer(tenantId, cloud));
-    // Legacy issuer format with tenant ID
-    if (cloud.legacyStsIssuer) {
-      acceptedIssuers.push(`${cloud.legacyStsIssuer}${tenantId}/`);
-    }
-  }
+  const acceptedIssuerRules = buildAcceptedIssuerRules({ tenantId, cloud });
 
   /**
    * Get signing key from JWKS.
@@ -114,11 +106,11 @@ export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'publi
           return;
         }
 
-        // Validate issuer (accept prefix match for STS issuer format)
+        // Validate issuer. Broad STS issuer matching is only kept for
+        // multi-tenant mode; single-tenant mode requires the tenant-qualified
+        // legacy issuer.
         const tokenIssuer = payload.iss || '';
-        const issuerValid = acceptedIssuers.some(accepted =>
-          tokenIssuer === accepted || tokenIssuer.startsWith(accepted)
-        );
+        const issuerValid = isIssuerAccepted(tokenIssuer, acceptedIssuerRules);
 
         if (!issuerValid) {
           reject(new Error(`Invalid issuer: ${tokenIssuer}`));
@@ -158,4 +150,33 @@ export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'publi
       res.status(401).json({ error: 'Invalid token' });
     }
   };
+}
+
+function buildAcceptedIssuerRules({ tenantId, cloud }) {
+  const rules = [];
+  if (cloud.botFrameworkIssuer) {
+    rules.push({ issuer: cloud.botFrameworkIssuer, prefix: false });
+  }
+  if (tenantId) {
+    rules.push({ issuer: getEntraIssuer(tenantId, cloud), prefix: false });
+    if (cloud.legacyStsIssuer) {
+      rules.push({ issuer: `${cloud.legacyStsIssuer}${tenantId}/`, prefix: false });
+    }
+  } else if (cloud.legacyStsIssuer) {
+    rules.push({ issuer: cloud.legacyStsIssuer, prefix: true });
+  }
+  return rules;
+}
+
+function isIssuerAccepted(tokenIssuer, rules) {
+  return rules.some(rule => (
+    rule.prefix
+      ? String(tokenIssuer || '').startsWith(rule.issuer)
+      : tokenIssuer === rule.issuer
+  ));
+}
+
+export function _isIssuerAcceptedForTest({ issuer, tenantId = '', cloud: cloudName = 'public' }) {
+  const cloud = getCloudConfig(cloudName);
+  return isIssuerAccepted(issuer, buildAcceptedIssuerRules({ tenantId, cloud }));
 }
