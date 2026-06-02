@@ -25,15 +25,16 @@ import { htmlToText, extractQuotedReply, extractReplyBlockquote } from './lib/ht
 import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
-import { escapeXml, buildEndpoint, parseC4Response, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
+import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
 import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getClientState } from './lib/channel-subscriptions.js';
 import { writeJsonAtomic } from './lib/atomic-write.js';
 import { createAccessControl, createMentionHelpers, stripThreadId } from './lib/access.js';
 import { recordHistoryEntry, getInMemoryContext, formatContextBlock, ensureReplay } from './lib/history.js';
 import { registerRoutes } from './routes.js';
+import { sendToC4 } from './lib/c4.js';
+import { replyIfUnsupportedInboundContent } from './lib/inbound-content.js';
 
-const C4_RECEIVE = path.join(process.env.HOME, 'zylos/.claude/skills/comm-bridge/scripts/c4-receive.js');
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
 const reactionContextCache = new Map();
@@ -218,51 +219,6 @@ function stopTyping(conversationId) {
   }
 }
 
-// ── C4 Communication ──
-
-function sendToC4(source, endpoint, content, onReject) {
-  if (!content) {
-    console.error('[ms-teams] sendToC4 called with empty content');
-    return;
-  }
-  const args = [
-    C4_RECEIVE,
-    '--channel', source,
-    '--endpoint', endpoint,
-    '--json',
-    '--content', content
-  ];
-
-  execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (error, stdout) => {
-    if (!error) {
-      console.log(`[ms-teams] Sent to C4: ${content.substring(0, 50)}...`);
-      return;
-    }
-    const response = parseC4Response(error.stdout || stdout);
-    if (response && response.ok === false && response.error?.message) {
-      console.warn(`[ms-teams] C4 rejected (${response.error.code}): ${response.error.message}`);
-      if (onReject) onReject(response.error.message);
-      return;
-    }
-    console.warn(`[ms-teams] C4 send failed, retrying in 2s: ${error.message}`);
-    setTimeout(() => {
-      execFile('node', args, { encoding: 'utf8', timeout: 35000 }, (retryError, retryStdout) => {
-        if (!retryError) {
-          console.log(`[ms-teams] Sent to C4 (retry): ${content.substring(0, 50)}...`);
-          return;
-        }
-        const retryResponse = parseC4Response(retryError.stdout || retryStdout);
-        if (retryResponse && retryResponse.ok === false && retryResponse.error?.message) {
-          console.error(`[ms-teams] C4 rejected after retry (${retryResponse.error.code}): ${retryResponse.error.message}`);
-          if (onReject) onReject(retryResponse.error.message);
-        } else {
-          console.error(`[ms-teams] C4 send failed after retry: ${retryError.message}`);
-        }
-      });
-    }, 2000);
-  });
-}
-
 function extractMessageContent(activity) {
   const htmlAtt = activity.attachments?.find(
     a => a.contentType === 'text/html' && a.content
@@ -362,6 +318,7 @@ async function handleMessage(ctx) {
       console.error(`[ms-teams] Failed to send reject reply: ${err.message}`);
     }
   };
+  const failReply = () => ctx.send('Sorry, I could not process your message right now. Please try again.').catch(() => {});
 
   if (convType === 'dm') {
     if (!config.owner?.bound) {
@@ -393,6 +350,7 @@ async function handleMessage(ctx) {
     }
 
     const mediaFiles = await downloadMedia();
+    if (await replyIfUnsupportedInboundContent(ctx, text, mediaFiles)) return;
 
     const audioFile = mediaFiles.find(m => {
       const ct = (m.contentType || '').toLowerCase();
@@ -404,7 +362,10 @@ async function handleMessage(ctx) {
         console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
         const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
         startTyping(conversationId);
-        sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+        sendToC4('ms-teams', endpoint, msg, {
+          onReject: (errMsg) => rejectReply(errMsg),
+          onFail: failReply,
+        });
         fs.unlink(audioFile.path, () => {});
         return;
       } catch (err) {
@@ -415,7 +376,10 @@ async function handleMessage(ctx) {
     let msg = formatMessage('dm', senderName, text, { quotedReply });
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     startTyping(conversationId);
-    sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('ms-teams', endpoint, msg, {
+      onReject: (errMsg) => rejectReply(errMsg),
+      onFail: failReply,
+    });
     return;
   }
 
@@ -575,6 +539,7 @@ async function handleMessage(ctx) {
     })();
     const shouldDownload = !smartNoMention || hasVoiceAttachment;
     const mediaFiles = shouldDownload ? await downloadMedia() : [];
+    if (await replyIfUnsupportedInboundContent(ctx, cleanText, mediaFiles)) return;
     const hasAttachments = nonHtmlAtts.length > 0;
 
     if (hasVoiceAttachment && VOICE_ENABLED) {
@@ -618,7 +583,10 @@ async function handleMessage(ctx) {
       msg += ` ---- file: ${escapeXml(media.path)}`;
     }
     if (!smartNoMention && convType !== 'channel') startTyping(conversationId);
-    sendToC4('ms-teams', endpoint, msg, (errMsg) => rejectReply(errMsg));
+    sendToC4('ms-teams', endpoint, msg, {
+      onReject: (errMsg) => rejectReply(errMsg),
+      onFail: failReply,
+    });
     return;
   }
 }
