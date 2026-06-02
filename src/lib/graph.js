@@ -1,11 +1,7 @@
 import path from 'node:path';
-import { getCredentials, DATA_DIR } from './config.js';
+import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { htmlToText } from './html.js';
-
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
-const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
-const BOT_SCOPE = 'https://api.botframework.com/.default';
+import { buildGraphUrl, buildLoginUrl, getCloudConfig } from './cloud.js';
 
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
@@ -20,18 +16,26 @@ export function isGraphEnabled() {
 export async function acquireTokenForScope(scope) {
   const creds = getCredentials();
   if (!creds.tenantId) throw new Error('MSTEAMS_TENANT_ID required for token acquisition');
+  const cloudName = getConfig().cloud || 'public';
+  const cloud = getCloudConfig(cloudName);
+  const resolvedScope = scope === 'botframework'
+    ? cloud.botFrameworkScope
+    : scope === 'graph'
+      ? cloud.graphScope
+      : scope;
 
   const now = Date.now();
-  const cached = tokenCache.get(scope);
+  const cacheKey = `${cloud.name}:${resolvedScope}`;
+  const cached = tokenCache.get(cacheKey);
   if (cached && now < cached.expiresAt - 60_000) {
     return cached.token;
   }
 
-  const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
+  const url = buildLoginUrl(creds.tenantId, cloudName);
   const body = new URLSearchParams({
     client_id: creds.appId,
     client_secret: creds.appPassword,
-    scope,
+    scope: resolvedScope,
     grant_type: 'client_credentials',
   });
 
@@ -48,7 +52,7 @@ export async function acquireTokenForScope(scope) {
   }
 
   const data = await res.json();
-  tokenCache.set(scope, {
+  tokenCache.set(cacheKey, {
     token: data.access_token,
     expiresAt: now + (data.expires_in * 1000),
   });
@@ -56,16 +60,16 @@ export async function acquireTokenForScope(scope) {
 }
 
 function acquireToken() {
-  return acquireTokenForScope(GRAPH_SCOPE);
+  return acquireTokenForScope('graph');
 }
 
 function acquireBotToken() {
-  return acquireTokenForScope(BOT_SCOPE);
+  return acquireTokenForScope('botframework');
 }
 
 export async function graphRequest(urlPath, options = {}) {
   const token = await acquireToken();
-  const url = urlPath.startsWith('http') ? urlPath : `${GRAPH_BASE}${urlPath}`;
+  const url = buildGraphUrl(urlPath, getConfig().cloud);
 
   const res = await fetch(url, {
     ...options,
@@ -134,7 +138,7 @@ export async function fetchChannelHistory(teamId, channelId, count = 10, threadM
 
   let data;
   if (delegatedToken) {
-    const url = `${GRAPH_BASE}${urlPath}`;
+    const url = buildGraphUrl(urlPath, getConfig().cloud);
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${delegatedToken}`, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30_000),

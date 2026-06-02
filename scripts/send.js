@@ -181,7 +181,7 @@ async function sendMedia(mediaType, filePath) {
   }
 }
 
-async function streamViaInternal(conversationId, action, { text, type, replyToId, streamId } = {}) {
+async function streamViaInternal(conversationId, action, { text, type, replyToId, streamId, stage, stages } = {}) {
   const internalToken = readInternalToken();
   if (!internalToken) throw new Error('Internal token not found');
 
@@ -190,6 +190,8 @@ async function streamViaInternal(conversationId, action, { text, type, replyToId
   if (text) payload.text = text;
   if (type) payload.type = type;
   if (replyToId) payload.replyToId = replyToId;
+  if (Number.isInteger(stage)) payload.stage = stage;
+  if (stages) payload.stages = stages;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);

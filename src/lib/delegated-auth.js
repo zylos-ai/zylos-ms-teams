@@ -1,15 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getCredentials, DATA_DIR } from './config.js';
+import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { writeJsonAtomic } from './atomic-write.js';
 import { extractChannelIds } from './format.js';
+import { buildGraphUrl, buildLoginUrl } from './cloud.js';
 
 const TOKENS_FILE = path.join(DATA_DIR, 'delegated-tokens.json');
-const AUTH_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize';
-const TOKEN_URL_TEMPLATE = 'https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token';
 const DELEGATED_SCOPES = 'Chat.ReadWrite ChannelMessage.Send offline_access';
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 let tokens = {};
 let tokensMtimeMs = 0;
@@ -51,7 +49,7 @@ export function buildAuthUrl(redirectUri) {
   if (!creds.tenantId) throw new Error('MSTEAMS_TENANT_ID required');
 
   const state = crypto.randomBytes(16).toString('hex');
-  const url = AUTH_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
+  const url = buildLoginUrl(creds.tenantId, getConfig().cloud, 'oauth2/v2.0/authorize');
   const params = new URLSearchParams({
     client_id: creds.appId,
     response_type: 'code',
@@ -75,7 +73,7 @@ export function consumeState(state) {
 
 export async function exchangeCode(code, redirectUri) {
   const creds = getCredentials();
-  const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
+  const url = buildLoginUrl(creds.tenantId, getConfig().cloud);
 
   const body = new URLSearchParams({
     client_id: creds.appId,
@@ -122,7 +120,7 @@ async function refreshToken(aadObjectId) {
   if (!entry?.refreshToken) return null;
 
   const creds = getCredentials();
-  const url = TOKEN_URL_TEMPLATE.replace('{tenantId}', creds.tenantId);
+  const url = buildLoginUrl(creds.tenantId, getConfig().cloud);
   const body = new URLSearchParams({
     client_id: creds.appId,
     client_secret: creds.appPassword,
@@ -223,7 +221,7 @@ async function resolveReactionUrl(aadObjectId, conversationType, conversationId,
   if (conversationType === 'channel') {
     const { teamId, channelId } = extractChannelIds(activity?.channelData);
     if (!teamId || !channelId) throw new Error('Missing teamId or channelId for channel reaction');
-    return `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/${verb}`;
+    return buildGraphUrl(`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/${verb}`, getConfig().cloud);
   }
 
   let graphChatId;
@@ -233,7 +231,7 @@ async function resolveReactionUrl(aadObjectId, conversationType, conversationId,
     graphChatId = resolveGraphChatId(aadObjectId);
     if (!graphChatId) return null;
   }
-  return `${GRAPH_BASE}/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/${verb}`;
+  return buildGraphUrl(`/chats/${encodeURIComponent(graphChatId)}/messages/${encodeURIComponent(messageId)}/${verb}`, getConfig().cloud);
 }
 
 export async function sendReaction({ aadObjectId, conversationType, conversationId, messageId, reactionType, activity }) {

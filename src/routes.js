@@ -10,6 +10,7 @@ import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 import { recordSentMessage } from './lib/sent-message-cache.js';
+import { buildProgressText, nextProgressText } from './lib/progress-stages.js';
 
 function sanitizePrefix(raw) {
   if (!raw) return '';
@@ -105,7 +106,7 @@ export function registerRoutes(expressApp, deps) {
       }
 
       if (type === 'channel' && replyToId && reference.serviceUrl) {
-        const botToken = await acquireTokenForScope('https://api.botframework.com/.default');
+        const botToken = await acquireTokenForScope('botframework');
         const serviceUrl = reference.serviceUrl.replace(/\/$/, '');
         const activity = {
           type: 'message',
@@ -163,11 +164,11 @@ export function registerRoutes(expressApp, deps) {
       return res.status(403).json({ error: 'unauthorized' });
     }
 
-    const { action, conversationId, text, type, replyToId, streamId } = req.body || {};
+    const { action, conversationId, text, type, replyToId, streamId, stage, stages } = req.body || {};
 
     if (action === 'start') {
-      if (!conversationId || !text) {
-        return res.status(400).json({ error: 'missing conversationId or text' });
+      if (!conversationId) {
+        return res.status(400).json({ error: 'missing conversationId' });
       }
 
       stopTyping(conversationId);
@@ -179,11 +180,13 @@ export function registerRoutes(expressApp, deps) {
           return res.status(404).json({ error: 'no conversation reference found' });
         }
 
-        const botToken = await acquireTokenForScope('https://api.botframework.com/.default');
+        const botToken = await acquireTokenForScope('botframework');
         const serviceUrl = (reference.serviceUrl || '').replace(/\/$/, '');
+        const streamStages = stages || getConfig().progressStages;
+        const initialText = text || buildProgressText(streamStages, 0);
         const activity = {
           type: 'message',
-          text,
+          text: initialText,
           textFormat: 'markdown',
           conversation: { id: type === 'channel' ? conversationId : baseConvId },
         };
@@ -205,10 +208,10 @@ export function registerRoutes(expressApp, deps) {
         recordSentMessage(targetConvId, activityId);
         const sid = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-        activeStreams.set(sid, { conversationId: targetConvId, activityId, serviceUrl, botToken, type });
+        activeStreams.set(sid, { conversationId: targetConvId, activityId, serviceUrl, botToken, type, stages: streamStages, stageIndex: 0 });
         setTimeout(() => activeStreams.delete(sid), 5 * 60_000);
 
-        res.json({ ok: true, streamId: sid, activityId });
+        res.json({ ok: true, streamId: sid, activityId, text: initialText });
       } catch (err) {
         console.error(`[ms-teams] Stream start error: ${err.message}`);
         res.status(500).json({ error: err.message });
@@ -216,7 +219,7 @@ export function registerRoutes(expressApp, deps) {
       return;
     }
 
-    if (action === 'update' || action === 'end') {
+    if (action === 'update' || action === 'stage' || action === 'end') {
       if (!streamId) {
         return res.status(400).json({ error: 'missing streamId' });
       }
@@ -226,10 +229,22 @@ export function registerRoutes(expressApp, deps) {
       }
 
       try {
-        if (text) {
+        let updateText = text;
+        if (action === 'stage') {
+          if (Number.isInteger(stage)) {
+            stream.stageIndex = Math.max(0, Math.min(stage, (stream.stages || []).length - 1));
+            updateText = buildProgressText(stream.stages, stream.stageIndex);
+          } else {
+            const next = nextProgressText(stream.stages, stream.stageIndex);
+            stream.stageIndex = next.index;
+            updateText = next.text;
+          }
+        }
+
+        if (updateText) {
           const updateActivity = {
             type: 'message',
-            text,
+            text: updateText,
             textFormat: 'markdown',
             conversation: { id: stream.conversationId },
           };
@@ -253,7 +268,7 @@ export function registerRoutes(expressApp, deps) {
             message_id: stream.activityId,
             user_id: 'bot',
             user_name: botName,
-            text: (text || '').substring(0, 500),
+            text: (updateText || '').substring(0, 500),
           });
           activeStreams.delete(streamId);
         }

@@ -1,11 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getCredentials, DATA_DIR } from './config.js';
+import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { acquireTokenForScope, graphRequest } from './graph.js';
+import { buildGraphUrl } from './cloud.js';
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 const SUBS_FILE = path.join(DATA_DIR, 'channel-subscriptions.json');
 const CLIENT_STATE_FILE = path.join(DATA_DIR, 'subscription-client-state');
 const RENEWAL_MARGIN_MS = 5 * 60_000;
@@ -115,8 +114,8 @@ export async function renewSubscription(subId) {
 
 export async function deleteSubscription(subId) {
   try {
-    const token = await acquireTokenForScope(GRAPH_SCOPE);
-    await fetch(`${GRAPH_BASE}/subscriptions/${subId}`, {
+    const token = await acquireTokenForScope('graph');
+    await fetch(buildGraphUrl(`/subscriptions/${subId}`, getConfig().cloud), {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(15_000),
