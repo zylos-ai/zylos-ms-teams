@@ -1,10 +1,12 @@
+import { stripThreadId } from './access.js';
+
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 1000;
 
 const sentMessagesByConversation = new Map();
 
 function normalizeConversationId(conversationId) {
-  return String(conversationId || '').split(';')[0];
+  return stripThreadId(String(conversationId || ''));
 }
 
 function pruneConversation(conversationId, ttlMs = DEFAULT_TTL_MS) {

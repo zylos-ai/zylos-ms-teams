@@ -34,7 +34,7 @@ import { registerRoutes } from './routes.js';
 import { sendToC4 } from './lib/c4.js';
 import { replyIfUnsupportedInboundContent } from './lib/inbound-content.js';
 import { extractCardText } from './lib/card-extractor.js';
-import { loadSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
+import { loadSeenDmUsers, saveSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
 import { buildWelcomeCardAttachment } from './lib/welcome-card.js';
 import { isSentMessage } from './lib/sent-message-cache.js';
 import { getCachedThreadParent, markThreadParentInjected, shouldInjectThreadParent } from './lib/thread-parent-cache.js';
@@ -100,6 +100,14 @@ let VOICE_ENABLED = transcriptionProvider.available;
 console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? `enabled (${transcriptionProvider.provider})` : 'disabled/unavailable'}`);
 
 const seenDmUsers = loadSeenDmUsers();
+
+function markDmUserSeen(aadObjectId) {
+  const userId = String(aadObjectId || '').trim();
+  if (!userId || seenDmUsers.has(userId)) return false;
+  seenDmUsers.add(userId);
+  saveSeenDmUsers(seenDmUsers);
+  return true;
+}
 
 // Credentials check
 const credentials = getCredentials();
@@ -263,10 +271,10 @@ async function fetchThreadParentContext(teamId, channelId, rootMessageId, conver
 
   try {
     const parentMsg = await getCachedThreadParent(teamId, channelId, rootMessageId, fetchMessage);
-    const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
-    const parentText = parentMsg.body?.contentType === 'text'
-      ? parentMsg.body?.content || ''
-      : htmlToMarkdown(parentMsg.body?.content || '');
+    const parentName = parentMsg?.from?.user?.displayName || parentMsg?.from?.application?.displayName || 'unknown';
+    const parentText = parentMsg?.body?.contentType === 'text'
+      ? parentMsg?.body?.content || ''
+      : htmlToMarkdown(parentMsg?.body?.content || '');
     if (parentText.trim()) {
       markThreadParentInjected(conversationId, rootMessageId);
       return { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
@@ -725,12 +733,12 @@ async function handleChannelNotification(notification) {
   const contextMessages = getInMemoryContext(threadConversationId, messageId, contextLimit);
   const contextBlock = formatContextBlock(contextMessages);
 
-  let msg = formatMessage('channel', senderName, text, {
+  let msg = appendTimezoneTag(formatMessage('channel', senderName, text, {
     groupName: channelName,
     quotedReply,
     contextBlock,
     smartHint: true,
-  });
+  }), graphMsg);
 
   const endpoint = buildEndpoint(threadConversationId, {
     type: 'channel',
@@ -949,15 +957,18 @@ teamsApp.on('conversationUpdate', async (ctx) => {
           }
         }
       } else if (convType === 'dm') {
+        const aadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
         try {
           await ctx.send({
             type: 'message',
-            attachments: [buildWelcomeCardAttachment(config, config.welcomeCardTitle || botName)],
+            attachments: [buildWelcomeCardAttachment(config, botName)],
           });
+          markDmUserSeen(aadObjectId);
         } catch (err) {
           console.warn(`[ms-teams] Failed to send welcome card: ${err.message}`);
           try {
             await ctx.send(config.dmWelcomeMessage || `I'm ready to help here.`);
+            markDmUserSeen(aadObjectId);
           } catch {}
         }
       }

@@ -20,6 +20,20 @@ function sanitizePrefix(raw) {
   return prefix;
 }
 
+async function readActivityIdFromResponse(response) {
+  try {
+    const result = await response.json();
+    if (result?.id) return result.id;
+    if (result?.activityId) return result.activityId;
+  } catch (err) {
+    console.warn(`[ms-teams] Failed to parse Bot Connector activity response: ${err.message}`);
+  }
+  return response.headers.get('resource-id')
+    || response.headers.get('activity-id')
+    || response.headers.get('id')
+    || '';
+}
+
 export function buildRedirectUri(req) {
   const publicUrl = getPublicUrl();
   if (publicUrl) {
@@ -115,8 +129,7 @@ export function registerRoutes(expressApp, deps) {
           const errText = await apiRes.text();
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
-        const result = await apiRes.json().catch(() => ({}));
-        recordSentMessage(conversationId, result.id);
+        recordSentMessage(conversationId, await readActivityIdFromResponse(apiRes));
       } else {
         const activity = { type: 'message', text: text || '', textFormat: 'markdown' };
         if (attachments?.length) activity.attachments = attachments;
@@ -188,8 +201,8 @@ export function registerRoutes(expressApp, deps) {
           const errText = await apiRes.text();
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
-        const result = await apiRes.json();
-        const activityId = result.id;
+        const activityId = await readActivityIdFromResponse(apiRes);
+        recordSentMessage(targetConvId, activityId);
         const sid = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         activeStreams.set(sid, { conversationId: targetConvId, activityId, serviceUrl, botToken, type });
