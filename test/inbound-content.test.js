@@ -31,4 +31,13 @@ describe('unsupported inbound content handling', () => {
     expect(handled).toBe(false);
     expect(ctx.send).not.toHaveBeenCalled();
   });
+
+  it('does not send an unsupported-content reply for unaddressed smart-mode observations', async () => {
+    const ctx = { send: vi.fn().mockResolvedValue(undefined) };
+
+    const handled = await replyIfUnsupportedInboundContent(ctx, '', [], { addressed: false });
+
+    expect(handled).toBe(false);
+    expect(ctx.send).not.toHaveBeenCalled();
+  });
 });

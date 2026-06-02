@@ -539,7 +539,7 @@ async function handleMessage(ctx) {
     })();
     const shouldDownload = !smartNoMention || hasVoiceAttachment;
     const mediaFiles = shouldDownload ? await downloadMedia() : [];
-    if (await replyIfUnsupportedInboundContent(ctx, cleanText, mediaFiles)) return;
+    if (await replyIfUnsupportedInboundContent(ctx, cleanText, mediaFiles, { addressed: !smartNoMention })) return;
     const hasAttachments = nonHtmlAtts.length > 0;
 
     if (hasVoiceAttachment && VOICE_ENABLED) {
