@@ -2,6 +2,7 @@ import path from 'node:path';
 import { getConfig, getCredentials, DATA_DIR } from './config.js';
 import { htmlToText } from './html.js';
 import { buildGraphUrl, buildLoginUrl, getCloudConfig } from './cloud.js';
+import { appendErrorHint } from './errors.js';
 
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
 
@@ -48,7 +49,10 @@ export async function acquireTokenForScope(scope) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Token request failed (${res.status}): ${text}`);
+    throw new Error(appendErrorHint(`Token request failed (${res.status}): ${text}`, {
+      status: res.status,
+      headers: res.headers,
+    }));
   }
 
   const data = await res.json();
@@ -83,7 +87,10 @@ export async function graphRequest(urlPath, options = {}) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Graph API error (${res.status}): ${text}`);
+    throw new Error(appendErrorHint(`Graph API error (${res.status}): ${text}`, {
+      status: res.status,
+      headers: res.headers,
+    }));
   }
 
   const contentType = res.headers.get('content-type') || '';
@@ -145,7 +152,10 @@ export async function fetchChannelHistory(teamId, channelId, count = 10, threadM
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Graph API error (${res.status}): ${text}`);
+      throw new Error(appendErrorHint(`Graph API error (${res.status}): ${text}`, {
+        status: res.status,
+        headers: res.headers,
+      }));
     }
     data = await res.json();
   } else {
@@ -155,6 +165,20 @@ export async function fetchChannelHistory(teamId, channelId, count = 10, threadM
   const messages = (data.value || []).reverse();
   console.debug(`[ms-teams/graph] fetchChannelHistory: path=${urlPath}, token=${delegatedToken ? 'delegated' : 'app'}, returned ${messages.length} messages`);
   return messages.map(formatGraphMessage);
+}
+
+export async function getThreadMessages(conversationId, replyToId, limit = 5, {
+  teamId = '',
+  channelId = '',
+  delegatedToken = '',
+} = {}) {
+  if (!isGraphEnabled()) return [];
+  const baseConversationId = String(conversationId || '').split(';')[0];
+  const threadRootId = replyToId || String(conversationId || '').match(/;messageid=([^;]+)/)?.[1] || '';
+  const resolvedChannelId = channelId || baseConversationId;
+  const resolvedTeamId = teamId || getConfig().channels?.[resolvedChannelId]?.teamId || '';
+  if (!threadRootId || !resolvedTeamId || !resolvedChannelId) return [];
+  return fetchChannelHistory(resolvedTeamId, resolvedChannelId, limit, threadRootId, delegatedToken);
 }
 
 function formatGraphMessage(msg) {

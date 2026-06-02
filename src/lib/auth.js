@@ -8,6 +8,7 @@
 import jwt from 'jsonwebtoken';
 import jwksRsa from 'jwks-rsa';
 import { getCloudConfig } from './cloud.js';
+import { appendErrorHint } from './errors.js';
 
 function getEntraJwksUri(tenantId, cloud) {
   return `https://${cloud.loginHost}/${tenantId}/discovery/v2.0/keys`;
@@ -153,7 +154,7 @@ export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'publi
       req.jwtPayload = payload;
       next();
     } catch (err) {
-      console.warn(`[ms-teams/auth] JWT validation failed: ${err.message}`);
+      console.warn(`[ms-teams/auth] ${appendErrorHint(`JWT validation failed: ${err.message}`, { error: err })}`);
       res.status(401).json({ error: 'Invalid token' });
     }
   };

@@ -13,6 +13,8 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 import { loadConfig, saveConfig, getCredentials } from './lib/config.js';
 import { getAuthenticatedUsers, revokeAuth, buildAuthUrl } from './lib/delegated-auth.js';
 import { formatDoctorReport, runDoctor } from './lib/doctor.js';
+import { approvePairingUser, denyPairingUser, loadPairingState, savePairingState } from './lib/dm-pairing.js';
+import { warningForActiveConversation } from './lib/activity-store.js';
 
 const VALID_GROUP_POLICIES = new Set(['disabled', 'allowlist', 'open']);
 
@@ -24,6 +26,11 @@ function saveConfigOrExit(config) {
   if (saveConfig(config)) return true;
   console.error('Failed to save config');
   process.exit(1);
+}
+
+function warnIfActive(conversationId, action) {
+  const warning = warningForActiveConversation(conversationId, action);
+  if (warning) console.warn(warning);
 }
 
 const commands = {
@@ -65,6 +72,7 @@ const commands = {
     }
     const config = loadConfig();
     if (!config.groups) config.groups = {};
+    warnIfActive(conversationId, 'adding group configuration');
 
     if (config.groups[conversationId]) {
       console.log(`Group ${conversationId} already configured, updating name`);
@@ -91,6 +99,7 @@ const commands = {
 
     if (config.groups?.[conversationId]) {
       const name = config.groups[conversationId].name;
+      warnIfActive(conversationId, 'removing group configuration');
       delete config.groups[conversationId];
       saveConfigOrExit(config);
       console.log(`Removed group: ${conversationId} (${name})`);
@@ -149,6 +158,7 @@ const commands = {
     if (!Array.isArray(config.groups[conversationId].allowFrom)) {
       config.groups[conversationId].allowFrom = [];
     }
+    warnIfActive(conversationId, `adding ${userId} to group allowFrom`);
     if (!config.groups[conversationId].allowFrom.includes(userId)) {
       config.groups[conversationId].allowFrom.push(userId);
       saveConfigOrExit(config);
@@ -172,6 +182,7 @@ const commands = {
     const af = config.groups[conversationId].allowFrom || [];
     const idx = af.indexOf(userId);
     if (idx !== -1) {
+      warnIfActive(conversationId, `removing ${userId} from group allowFrom`);
       af.splice(idx, 1);
       config.groups[conversationId].allowFrom = af;
       saveConfigOrExit(config);
@@ -210,6 +221,7 @@ const commands = {
     if (!Array.isArray(config.channels[channelId].allowFrom)) {
       config.channels[channelId].allowFrom = [];
     }
+    warnIfActive(channelId, `adding ${userId} to channel allowFrom`);
     if (!config.channels[channelId].allowFrom.includes(userId)) {
       config.channels[channelId].allowFrom.push(userId);
       saveConfigOrExit(config);
@@ -233,6 +245,7 @@ const commands = {
     const af = config.channels[channelId].allowFrom || [];
     const idx = af.indexOf(userId);
     if (idx !== -1) {
+      warnIfActive(channelId, `removing ${userId} from channel allowFrom`);
       af.splice(idx, 1);
       config.channels[channelId].allowFrom = af;
       saveConfigOrExit(config);
@@ -259,7 +272,7 @@ const commands = {
   },
 
   'set-dm-policy': (policy) => {
-    const valid = ['open', 'allowlist', 'owner'];
+    const valid = ['open', 'allowlist', 'owner', 'pairing'];
     policy = String(policy || '').trim().toLowerCase();
     if (!valid.includes(policy)) {
       console.error(`Usage: admin.js set-dm-policy <${valid.join('|')}>`);
@@ -268,7 +281,12 @@ const commands = {
     const config = loadConfig();
     config.dmPolicy = policy;
     saveConfigOrExit(config);
-    const desc = { open: 'Anyone can DM', allowlist: 'Only dmAllowFrom users can DM', owner: 'Only owner can DM' };
+    const desc = {
+      open: 'Anyone can DM',
+      allowlist: 'Only dmAllowFrom users can DM',
+      owner: 'Only owner can DM',
+      pairing: 'Unknown users request approval before DM access',
+    };
     console.log(`DM policy set to: ${policy} (${desc[policy]})`);
     console.log('Run: pm2 restart zylos-ms-teams');
   },
@@ -290,6 +308,7 @@ const commands = {
     if (!Array.isArray(config.dmAllowFrom)) {
       config.dmAllowFrom = [];
     }
+    warnIfActive(userId, `adding ${userId} to DM allowlist`);
     if (!config.dmAllowFrom.includes(userId)) {
       config.dmAllowFrom.push(userId);
     }
@@ -313,6 +332,7 @@ const commands = {
     }
     const idx = config.dmAllowFrom.indexOf(userId);
     if (idx !== -1) {
+      warnIfActive(userId, `removing ${userId} from DM allowlist`);
       config.dmAllowFrom.splice(idx, 1);
       saveConfigOrExit(config);
       console.log(`Removed ${userId} from dmAllowFrom`);
@@ -336,6 +356,49 @@ const commands = {
     console.log(message ? message : 'DM welcome message disabled');
   },
 
+  'dm-pending': () => {
+    const state = loadPairingState();
+    const entries = Object.entries(state.pending || {});
+    if (entries.length === 0) {
+      console.log('No pending DM pairing requests');
+      return;
+    }
+    console.log(`Pending DM Pairing Requests (${entries.length}):`);
+    for (const [userId, entry] of entries) {
+      console.log(`  ${userId} - ${entry.userName || 'unknown'} requested ${entry.requestedAt || 'unknown time'}`);
+      if (entry.conversationId) console.log(`    conversation: ${entry.conversationId}`);
+      if (entry.firstMessage) console.log(`    first message: ${entry.firstMessage}`);
+    }
+  },
+
+  'dm-approve': (userId) => {
+    if (!userId) {
+      console.error('Usage: admin.js dm-approve <aad_object_id>');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const state = loadPairingState();
+    approvePairingUser(config, userId, state);
+    savePairingState(state);
+    saveConfigOrExit(config);
+    console.log(`Approved DM access for ${userId}`);
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
+  'dm-deny': (userId, ...reasonParts) => {
+    if (!userId) {
+      console.error('Usage: admin.js dm-deny <aad_object_id> [reason]');
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const state = loadPairingState();
+    denyPairingUser(config, userId, reasonParts.join(' '), state);
+    savePairingState(state);
+    saveConfigOrExit(config);
+    console.log(`Denied DM access for ${userId}`);
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
   'show-owner': () => {
     const config = loadConfig();
     const owner = config.owner || {};
@@ -354,6 +417,7 @@ const commands = {
     }
     const config = loadConfig();
     if (!config.channels) config.channels = {};
+    warnIfActive(channelId, 'adding channel configuration');
 
     if (config.channels[channelId]) {
       console.log(`Channel ${channelId} already configured, updating`);
@@ -383,6 +447,7 @@ const commands = {
       return;
     }
     const name = config.channels[channelId].name;
+    warnIfActive(channelId, 'removing channel configuration');
     delete config.channels[channelId];
     saveConfigOrExit(config);
     console.log(`Removed channel: ${channelId} (${name})`);
@@ -538,10 +603,13 @@ Commands:
   list-channel-allow <chId>           Show per-channel allowFrom list
 
   DM Access Control:
-  set-dm-policy <open|allowlist|owner> Set DM policy
+  set-dm-policy <open|allowlist|owner|pairing> Set DM policy
   list-dm-allow                       Show DM policy and allowFrom list
   add-dm-allow <aad_object_id>        Add user to dmAllowFrom
   remove-dm-allow <aad_object_id>     Remove user from dmAllowFrom
+  dm-pending                          List pending DM pairing requests
+  dm-approve <aad_object_id>          Approve pending DM access
+  dm-deny <aad_object_id> [reason]    Deny pending DM access
   set-dm-welcome <message>            Set DM first-contact welcome message
   show-dm-welcome                     Show DM welcome message
 

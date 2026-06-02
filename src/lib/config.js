@@ -16,6 +16,8 @@ export const DEFAULT_CONFIG = {
   dmPolicy: 'owner',
   dmAllowFrom: [],
   dmWelcomeMessage: '',
+  dmPairingPendingMessage: 'Your DM access request has been sent for approval.',
+  dmPairingDeniedMessage: 'Sorry, your DM access request was denied.',
   promptStarters: ['What can you do?', 'Help me draft a message', 'Summarize a document'],
   welcomeCardTitle: null,
   cloud: 'public',

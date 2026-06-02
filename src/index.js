@@ -22,7 +22,7 @@ import { createMessageDeduper, MESSAGE_DEDUP_TTL_MS } from './lib/message-dedup.
 import { saveConversationReference, getConversationReference, getAllConversationReferences } from './lib/conversation-store.js';
 import { htmlToText, htmlToMarkdown, extractQuotedReply, extractReplyBlockquote } from './lib/html.js';
 import { createJwtMiddleware } from './lib/auth.js';
-import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory } from './lib/graph.js';
+import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory, getThreadMessages } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers } from './lib/delegated-auth.js';
@@ -41,6 +41,8 @@ import { getCachedThreadParent, markThreadParentInjected, shouldInjectThreadPare
 import { createInboundDebouncer } from './lib/inbound-debounce.js';
 import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
 import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
+import { buildPairingNotification, getPairingStatus, loadPairingState, markPairingPending, savePairingState } from './lib/dm-pairing.js';
+import { recordConversationActivity } from './lib/activity-store.js';
 
 const INTERNAL_TOKEN = crypto.randomBytes(24).toString('hex');
 const REACTION_CACHE_FILE = path.join(DATA_DIR, 'reaction-cache.json');
@@ -195,6 +197,15 @@ function dispatchToC4(endpoint, msg, callbacks) {
   inboundDebouncer.schedule(key, { endpoint, msg, callbacks }, ({ endpoint, msg, callbacks }) => {
     sendToC4('ms-teams', endpoint, msg, callbacks);
   });
+}
+
+function notifyPairingRequest({ userId, userName, conversationId, firstMessage }) {
+  sendToC4('ms-teams', 'admin|type:dm-pairing', buildPairingNotification({
+    userId,
+    userName,
+    conversationId,
+    firstMessage,
+  }));
 }
 
 // ── Express + HTTP Server ──
@@ -415,11 +426,45 @@ async function handleMessage(ctx) {
   const failReply = () => ctx.send('Sorry, I could not process your message right now. Please try again.').catch(() => {});
 
   if (convType === 'dm') {
+    recordConversationActivity({
+      conversationId: senderAadObjectId,
+      type: 'dm',
+      name: senderName,
+      at: activity.timestamp || new Date().toISOString(),
+    });
+
     if (!config.owner?.bound) {
       await access.bindOwner(senderAadObjectId, senderName);
     }
 
     if (!access.isDmAllowed(senderAadObjectId)) {
+      if ((config.dmPolicy || 'owner') === 'pairing') {
+        const state = loadPairingState();
+        const pairingStatus = getPairingStatus(senderAadObjectId, state);
+        if (pairingStatus === 'denied') {
+          logRejection('dmPolicy=pairing denied');
+          await ctx.send(config.dmPairingDeniedMessage || 'Sorry, your DM access request was denied.');
+          return;
+        }
+        if (pairingStatus !== 'pending') {
+          markPairingPending({
+            userId: senderAadObjectId,
+            userName: senderName,
+            conversationId,
+            firstMessage: text,
+          }, state);
+          savePairingState(state);
+          notifyPairingRequest({
+            userId: senderAadObjectId,
+            userName: senderName,
+            conversationId,
+            firstMessage: text,
+          });
+        }
+        logRejection('dmPolicy=pairing pending');
+        await ctx.send(config.dmPairingPendingMessage || 'Your DM access request has been sent for approval.');
+        return;
+      }
       logRejection(`dmPolicy=${config.dmPolicy || 'owner'}`);
       await ctx.send("Sorry, I'm not available for private messages. Please ask my owner to grant you access.");
       return;
@@ -560,6 +605,12 @@ async function handleMessage(ctx) {
       cleanText = cleanText.slice(botMentionEntity.mentioned.name.length).trim();
     }
     const groupName = access.getConversationName(convType, conversationId);
+    recordConversationActivity({
+      conversationId,
+      type: convType,
+      name: groupName,
+      at: activity.timestamp || new Date().toISOString(),
+    });
 
     if (!quotedReply && convType === 'channel' && isGraphEnabled()) {
       const threadRootId = activity.replyToId || conversationId.match(/;messageid=(\d+)/)?.[1];
@@ -580,12 +631,14 @@ async function handleMessage(ctx) {
       try {
         const { teamId, channelId } = extractChannelIds(activity.channelData);
         const threadMatch = conversationId.match(/;messageid=(\d+)/);
-        const threadMessageId = threadMatch ? threadMatch[1] : '';
+        const threadMessageId = activity.replyToId || (threadMatch ? threadMatch[1] : '');
         const authUser = hasAuth(senderAadObjectId) ? senderAadObjectId : getAuthenticatedUsers()[0]?.aadObjectId;
         const delegatedToken = authUser ? await getDelegatedToken(authUser) : '';
-        const graphMessages = teamId
-          ? await fetchChannelHistory(teamId, channelId, contextLimit, threadMessageId, delegatedToken || '')
-          : await fetchChatHistory(conversationId, contextLimit);
+        const graphMessages = teamId && threadMessageId
+          ? await getThreadMessages(conversationId, threadMessageId, Math.min(5, contextLimit), { teamId, channelId, delegatedToken: delegatedToken || '' })
+          : teamId
+            ? await fetchChannelHistory(teamId, channelId, contextLimit, '', delegatedToken || '')
+            : await fetchChatHistory(conversationId, contextLimit);
         for (const gm of graphMessages) {
           recordHistory(conversationId, {
             timestamp: gm.time,
@@ -595,7 +648,19 @@ async function handleMessage(ctx) {
             text: gm.body,
           });
         }
-        contextMessages = getInMemoryContext(conversationId, activityId, contextLimit);
+        const existingIds = new Set(contextMessages.map(m => String(m.message_id || '')));
+        const threadContext = graphMessages
+          .filter(gm => gm.id && !existingIds.has(String(gm.id)) && String(gm.id) !== String(activityId))
+          .map(gm => ({
+            timestamp: gm.time,
+            message_id: gm.id,
+            user_id: gm.from,
+            user_name: gm.from,
+            text: gm.body,
+          }));
+        contextMessages = [...getInMemoryContext(conversationId, activityId, contextLimit), ...threadContext]
+          .filter((entry, index, entries) => entries.findIndex(other => String(other.message_id || '') === String(entry.message_id || '')) === index)
+          .slice(-contextLimit);
       } catch (err) {
         console.warn(`[ms-teams] Graph context fetch failed: ${err.message}`);
       }
@@ -760,6 +825,12 @@ async function handleChannelNotification(notification) {
   });
 
   const channelName = access.getConversationName('channel', conversationId);
+  recordConversationActivity({
+    conversationId,
+    type: 'channel',
+    name: channelName,
+    at: graphMsg.createdDateTime || new Date().toISOString(),
+  });
 
   let quotedReply = null;
   if (rootMessageId) {
