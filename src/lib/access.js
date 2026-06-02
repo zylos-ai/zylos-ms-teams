@@ -92,7 +92,7 @@ export function createMentionHelpers(getBotIdFn) {
     if (!activity.entities) return text;
     for (const entity of activity.entities) {
       if (isBotMention(entity) && entity.text) {
-        text = text.replace(entity.text, '').trim();
+        text = text.replaceAll(entity.text, '').trim();
       }
     }
     return text;
@@ -104,7 +104,7 @@ export function createMentionHelpers(getBotIdFn) {
     for (const entity of activity.entities) {
       if (isBotMention(entity) && entity.text) {
         const displayName = entity.mentioned?.name || botName;
-        text = text.replace(entity.text, displayName).trim();
+        text = text.replaceAll(entity.text, displayName).trim();
       }
     }
     return text;

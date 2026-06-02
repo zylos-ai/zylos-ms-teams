@@ -10,7 +10,13 @@ export function recordHistoryEntry(chatId, entry, config) {
 
   if (entry.message_id && history.some(h => h.message_id === entry.message_id)) return;
 
-  const normalize = t => (t || '').replace(/[*_`#\->\[\]()!]/g, '').replace(/\s+/g, ' ').trim().substring(0, 120);
+  const normalize = t => (t || '')
+    .split('\n')
+    .map(line => line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|>\s*|\d+[.)]\s+|`{3,}\s*)/, ''))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 120);
   const entryNorm = normalize(entry.text);
   const entryTime = new Date(entry.timestamp).getTime();
   const recentDup = entryNorm && history.find(h =>

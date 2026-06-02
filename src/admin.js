@@ -75,8 +75,9 @@ const commands = {
     warnIfActive(conversationId, 'adding group configuration');
 
     if (config.groups[conversationId]) {
-      console.log(`Group ${conversationId} already configured, updating name`);
+      console.log(`Group ${conversationId} already configured, updating name and mode`);
       config.groups[conversationId].name = name;
+      config.groups[conversationId].mode = mode;
     } else {
       config.groups[conversationId] = {
         name,

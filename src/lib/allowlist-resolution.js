@@ -6,6 +6,7 @@ const HOME = process.env.HOME;
 export const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
 export const ALLOWLIST_RESOLUTION_FILE = path.join(DATA_DIR, 'allowlist-resolution.json');
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_CONCURRENCY = 5;
 
 function normalize(value) {
   return String(value || '').trim();
@@ -34,6 +35,30 @@ function collectAllowEntries(config) {
     for (const value of cfg.allowFrom || []) entries.add(String(value));
   }
   return [...entries].map(normalize).filter(Boolean);
+}
+
+async function allSettledWithLimit(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const numericLimit = Number(limit);
+  const normalizedLimit = Number.isFinite(numericLimit) && numericLimit > 0
+    ? Math.floor(numericLimit)
+    : DEFAULT_CONCURRENCY;
+  const workerCount = Math.min(normalizedLimit, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      const item = items[index];
+      try {
+        results[index] = { status: 'fulfilled', value: await worker(item), item };
+      } catch (err) {
+        results[index] = { status: 'rejected', reason: err, item };
+      }
+    }
+  }));
+
+  return results;
 }
 
 export function loadAllowlistResolution(filePath = ALLOWLIST_RESOLUTION_FILE) {
@@ -76,6 +101,7 @@ export async function refreshAllowlistResolution(config, {
   getMembers,
   logger = console,
   filePath = ALLOWLIST_RESOLUTION_FILE,
+  concurrency = DEFAULT_CONCURRENCY,
 } = {}) {
   if (!findUsers || !getMembers) {
     const graph = await import('./graph.js');
@@ -86,28 +112,53 @@ export async function refreshAllowlistResolution(config, {
   const entries = collectAllowEntries(config);
   const users = {};
   const groups = {};
+  const tasks = [];
 
   for (const entry of entries) {
     if (entry === '*' || entry.includes('*') || entry.includes('?')) continue;
     if (entry.toLowerCase().startsWith('group:')) {
       const groupName = normalize(entry.slice('group:'.length));
       if (!groupName) continue;
-      try {
-        groups[key(groupName)] = {
-          displayName: groupName,
-          members: await getMembers(groupName),
-        };
-      } catch (err) {
-        logger.warn?.(`[ms-teams/allowlist] group:${groupName} resolution failed: ${err.message}`);
-      }
+      tasks.push({ type: 'group', displayName: groupName, key: key(groupName) });
       continue;
     }
     if (looksLikeDirectId(entry)) continue;
-    try {
-      const matches = await findUsers(entry);
-      users[key(entry)] = matches.map(user => user.id).filter(Boolean);
-    } catch (err) {
-      logger.warn?.(`[ms-teams/allowlist] user "${entry}" resolution failed: ${err.message}`);
+    tasks.push({ type: 'user', displayName: entry, key: key(entry) });
+  }
+
+  const settled = await allSettledWithLimit(tasks, concurrency, async task => {
+    if (task.type === 'group') {
+      return {
+        ...task,
+        members: await getMembers(task.displayName),
+      };
+    }
+    const matches = await findUsers(task.displayName);
+    return {
+      ...task,
+      users: matches.map(user => user.id).filter(Boolean),
+    };
+  });
+
+  for (const result of settled) {
+    const task = result.item;
+    if (result.status === 'rejected') {
+      const message = result.reason?.message || String(result.reason);
+      if (task.type === 'group') {
+        logger.warn?.(`[ms-teams/allowlist] group:${task.displayName} resolution failed: ${message}`);
+      } else {
+        logger.warn?.(`[ms-teams/allowlist] user "${task.displayName}" resolution failed: ${message}`);
+      }
+      continue;
+    }
+    const resolved = result.value;
+    if (resolved.type === 'group') {
+      groups[resolved.key] = {
+        displayName: resolved.displayName,
+        members: resolved.members,
+      };
+    } else {
+      users[resolved.key] = resolved.users;
     }
   }
 

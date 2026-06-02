@@ -82,6 +82,10 @@ describe('htmlToText', () => {
     expect(htmlToText('<p>&#x41;&#x42;</p>')).toBe('AB');
   });
 
+  it('decodes supplementary-plane numeric entities', () => {
+    expect(htmlToText('<p>&#128512; &#x1F600;</p>')).toBe('😀 😀');
+  });
+
   it('extracts Teams @mention text', () => {
     expect(htmlToText('<at>@Zylos</at> hello')).toBe('@Zylos hello');
   });

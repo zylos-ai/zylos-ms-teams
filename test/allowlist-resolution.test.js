@@ -30,4 +30,30 @@ describe('allowlist resolution', () => {
     expect(cached.groups.engineering.members).toEqual(['aad-group-engineering']);
     expect(config._allowlistResolution.users['felix lin']).toEqual(['aad-felix-lin']);
   });
+
+  it('resolves entries concurrently with a bounded limit', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'allowlist-resolution-'));
+    const filePath = path.join(tmpDir, 'resolution.json');
+    let active = 0;
+    let maxActive = 0;
+    const findUsers = vi.fn(async name => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      active--;
+      return [{ id: `aad-${name}` }];
+    });
+
+    await refreshAllowlistResolution({
+      dmAllowFrom: ['Ada', 'Grace', 'Linus', 'Margaret', 'Katherine'],
+    }, {
+      findUsers,
+      getMembers: vi.fn(),
+      filePath,
+      concurrency: 2,
+    });
+
+    expect(findUsers).toHaveBeenCalledTimes(5);
+    expect(maxActive).toBe(2);
+  });
 });
