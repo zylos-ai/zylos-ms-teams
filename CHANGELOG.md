@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-02
+
 ### Added
 - PR #6: Startup credential probe for Bot Framework credentials.
 - PR #6: Welcome card prompt starters and first-contact DM welcome messaging.
@@ -34,6 +36,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PR #9: Allowlist access checks can use resolved identities in addition to raw AAD object IDs.
 - PR #10: Channel/group route config can override reply style while global config remains the fallback.
 - Documentation now reflects the post-PR #10 runtime modules, config fields, admin commands, and upgrade-preserved data files.
+- PR #11: DESIGN.md, README.md, SKILL.md, and CLAUDE.md refreshed to match the v0.2.0 runtime (module list, config surface, data flow, security, and upgrade-preserved data files).
+
+### Security
+- PR #12: Tightened JWT issuer validation — single-tenant deployments now require the tenant-qualified issuer, closing acceptance of other tenants' tokens (broad legacy-STS matching retained only for multi-tenant mode).
+- PR #12: Express `trust proxy` scoped to loopback for the reverse-proxy (Caddy) deployment path.
+- PR #13: All config writes — runtime `saveConfig`, the configure hook, and install/upgrade hooks — are now atomic with `0600` permissions, so the secret-bearing config is never written world-readable.
+
+### Fixed
+- PR #12: Coalesced concurrent delegated-token refreshes (per user) and app-token requests (per cloud/scope) to prevent token-refresh races and duplicate fetches.
+- PR #12: Serialized conversation-log replay and truncation with queued appends to prevent lost log entries.
+- PR #12: Capped the reaction-context cache and added TTL cleanup for pending reactions; timers are unref'd and cleared on shutdown.
+- PR #13: Conversation activity store caches in memory with debounced writes and flushes pending state on shutdown.
+- PR #13: Audio temp files are removed after transcription attempts (success or failure).
+- PR #13: Config reload flushes pending debounced inbound messages before replacing the debouncer, and the config watcher no longer fires after shutdown.
+- PR #13: `safeFetch` uses a single cumulative timeout across redirect hops instead of a fresh timeout per hop.
+- PR #13: Delegated-auth token parsing uses the shared safe JWT decoder and fails cleanly when no user identifier is present.
+- PR #14: Repeated bot mentions are fully stripped/replaced; allowlist resolution runs with bounded parallelism; send retries re-read the internal token after rate limiting; history dedup preserves inline punctuation; `add-group` updates both name and mode for existing groups; numeric HTML entities decode supplementary-plane emoji correctly.
+
+### Removed
+- PR #15: Removed dead code (`acquireBotToken`, unused `saveActivityState` export, no-op `toGraphChatId` passthrough) and unused imports, and de-duplicated the allowlist `normalize`/`normalizeName` helpers into a shared module.
 
 ## [0.1.7] - 2026-06-02
 
