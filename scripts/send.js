@@ -68,7 +68,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function sendViaInternal(conversationId, text, { replyToId, attachments } = {}) {
+async function sendViaInternal(conversationId, text, { replyToId, attachments, returnActivityId } = {}) {
   const internalToken = readInternalToken();
   if (!internalToken) {
     throw new Error('Internal token not found. Is the ms-teams service running?');
@@ -82,6 +82,7 @@ async function sendViaInternal(conversationId, text, { replyToId, attachments } 
   };
   if (replyToId) payload.replyToId = replyToId;
   if (attachments?.length) payload.attachments = attachments;
+  if (returnActivityId) payload.returnActivityId = true;
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -181,40 +182,10 @@ async function sendMedia(mediaType, filePath) {
   }
 }
 
-async function streamViaInternal(conversationId, action, { text, type, replyToId, streamId, stage, stages } = {}) {
-  const internalToken = readInternalToken();
-  if (!internalToken) throw new Error('Internal token not found');
-
-  const port = config.port || 3978;
-  const payload = { action, conversationId, streamId };
-  if (text) payload.text = text;
-  if (type) payload.type = type;
-  if (replyToId) payload.replyToId = replyToId;
-  if (Number.isInteger(stage)) payload.stage = stage;
-  if (stages) payload.stages = stages;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/internal/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Internal-Token': internalToken },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-    return result;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function sendText(text) {
   const chunks = splitMarkdownMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
   const triggerMsgId = parsedEndpoint.msg || null;
-  const type = parsedEndpoint.type || 'dm';
 
   if (chunks.length <= 1) {
     const opts = {};
@@ -223,17 +194,12 @@ async function sendText(text) {
     return;
   }
 
-  // Multi-chunk: use stream start for first chunk (gets activity ID for updates),
-  // then send remaining chunks as separate messages
-  let streamId = null;
+  // Multi-chunk: request the activity ID for the first chunk, then send the rest normally.
   try {
-    const result = await streamViaInternal(conversationId, 'start', {
-      text: chunks[0],
-      type,
+    await sendViaInternal(conversationId, chunks[0], {
       replyToId: triggerMsgId || undefined,
+      returnActivityId: true,
     });
-    streamId = result.streamId;
-    await streamViaInternal(conversationId, 'end', { streamId });
   } catch {
     const opts = {};
     if (triggerMsgId) opts.replyToId = triggerMsgId;

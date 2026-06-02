@@ -20,7 +20,6 @@ export const DEFAULT_CONFIG = {
   welcomeCardTitle: null,
   cloud: 'public',
   debounceMs: 0,
-  progressStages: ['Queued', 'Working', 'Sending'],
   voiceTranscription: 'auto',
   whisperModel: '',
   groupPolicy: 'allowlist',
@@ -51,7 +50,6 @@ export function mergeConfigWithDefaults(parsed = {}) {
     welcomeCardTitle: parsed.welcomeCardTitle ?? DEFAULT_CONFIG.welcomeCardTitle,
     cloud: parsed.cloud || process.env.MSTEAMS_CLOUD || DEFAULT_CONFIG.cloud,
     debounceMs: Number.isFinite(Number(parsed.debounceMs)) ? Math.max(0, Number(parsed.debounceMs)) : DEFAULT_CONFIG.debounceMs,
-    progressStages: Array.isArray(parsed.progressStages) ? parsed.progressStages : DEFAULT_CONFIG.progressStages,
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})

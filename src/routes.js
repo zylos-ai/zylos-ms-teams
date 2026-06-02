@@ -10,7 +10,6 @@ import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 import { recordSentMessage } from './lib/sent-message-cache.js';
-import { buildProgressText, nextProgressText } from './lib/progress-stages.js';
 import { readActivityIdFromResponse } from './lib/bot-connector.js';
 
 function sanitizePrefix(raw) {
@@ -78,7 +77,7 @@ export function registerRoutes(expressApp, deps) {
       return res.status(403).json({ error: 'unauthorized' });
     }
 
-    const { conversationId, text, type, replyToId, attachments } = req.body || {};
+    const { conversationId, text, type, replyToId, attachments, returnActivityId } = req.body || {};
     if (!conversationId || (!text && !attachments?.length)) {
       return res.status(400).json({ error: 'missing conversationId or message content' });
     }
@@ -92,18 +91,25 @@ export function registerRoutes(expressApp, deps) {
         return res.status(404).json({ error: 'no conversation reference found' });
       }
 
-      if (type === 'channel' && replyToId && reference.serviceUrl) {
+      let activityId = '';
+      const useBotConnector = returnActivityId || (type === 'channel' && replyToId && reference.serviceUrl);
+
+      if (useBotConnector) {
+        if (!reference.serviceUrl) {
+          throw new Error('conversation reference has no serviceUrl');
+        }
         const botToken = await acquireTokenForScope('botframework');
         const serviceUrl = reference.serviceUrl.replace(/\/$/, '');
         const activity = {
           type: 'message',
           text: text || '',
           textFormat: 'markdown',
-          conversation: { id: conversationId },
-          replyToId,
+          conversation: { id: type === 'channel' ? conversationId : baseConvId },
         };
+        if (type === 'channel' && replyToId) activity.replyToId = replyToId;
         if (attachments?.length) activity.attachments = attachments;
-        const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(conversationId)}/activities`;
+        const targetConvId = type === 'channel' ? conversationId : baseConvId;
+        const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(targetConvId)}/activities`;
         const apiRes = await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -117,7 +123,14 @@ export function registerRoutes(expressApp, deps) {
           const errText = await apiRes.text();
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
-        recordSentMessage(conversationId, await readActivityIdFromResponse(apiRes));
+        const connectorActivityId = await readActivityIdFromResponse(apiRes);
+        recordSentMessage(conversationId, connectorActivityId);
+        if (returnActivityId) {
+          activityId = connectorActivityId;
+          if (!activityId) {
+            throw new Error('Bot Connector API did not return an activity id');
+          }
+        }
       } else {
         const activity = { type: 'message', text: text || '', textFormat: 'markdown' };
         if (attachments?.length) activity.attachments = attachments;
@@ -127,154 +140,19 @@ export function registerRoutes(expressApp, deps) {
 
       recordHistoryEntry(baseConvId, {
         timestamp: new Date().toISOString(),
-        message_id: `bot:${Date.now()}`,
+        message_id: activityId || `bot:${Date.now()}`,
         user_id: 'bot',
         user_name: botName,
         text: (text || '[card]').substring(0, 500),
       });
 
-      res.json({ ok: true });
+      const result = { ok: true };
+      if (returnActivityId) result.activityId = activityId;
+      res.json(result);
     } catch (err) {
       console.error(`[ms-teams] Internal send error: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
-  });
-
-  // ── Internal stream endpoint (progressive message updates) ──
-
-  const activeStreams = new Map();
-
-  expressApp.use('/internal/stream', express.json());
-  expressApp.post('/internal/stream', async (req, res) => {
-    const token = req.headers['x-internal-token'];
-    if (!token || token !== internalToken) {
-      return res.status(403).json({ error: 'unauthorized' });
-    }
-
-    const { action, conversationId, text, type, replyToId, streamId, stage, stages } = req.body || {};
-
-    if (action === 'start') {
-      if (!conversationId) {
-        return res.status(400).json({ error: 'missing conversationId' });
-      }
-
-      stopTyping(conversationId);
-
-      try {
-        const baseConvId = conversationId.split(';')[0];
-        const reference = await getConversationReference(baseConvId) || await getConversationReference(conversationId);
-        if (!reference) {
-          return res.status(404).json({ error: 'no conversation reference found' });
-        }
-
-        const botToken = await acquireTokenForScope('botframework');
-        const serviceUrl = (reference.serviceUrl || '').replace(/\/$/, '');
-        const streamStages = stages || getConfig().progressStages;
-        const initialText = text || buildProgressText(streamStages, 0);
-        if (!initialText.trim()) {
-          return res.status(400).json({ error: 'missing text or progress stages' });
-        }
-        const activity = {
-          type: 'message',
-          text: initialText,
-          textFormat: 'markdown',
-          conversation: { id: type === 'channel' ? conversationId : baseConvId },
-        };
-        if (type === 'channel' && replyToId) activity.replyToId = replyToId;
-
-        const targetConvId = type === 'channel' ? conversationId : baseConvId;
-        const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(targetConvId)}/activities`;
-        const apiRes = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(activity),
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!apiRes.ok) {
-          const errText = await apiRes.text();
-          throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
-        }
-        const activityId = await readActivityIdFromResponse(apiRes);
-        if (!activityId) {
-          throw new Error('Bot Connector API did not return an activity id');
-        }
-        recordSentMessage(targetConvId, activityId);
-        const sid = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-        activeStreams.set(sid, { conversationId: targetConvId, activityId, serviceUrl, botToken, type, stages: streamStages, stageIndex: 0 });
-        setTimeout(() => activeStreams.delete(sid), 5 * 60_000);
-
-        res.json({ ok: true, streamId: sid, activityId, text: initialText });
-      } catch (err) {
-        console.error(`[ms-teams] Stream start error: ${err.message}`);
-        res.status(500).json({ error: err.message });
-      }
-      return;
-    }
-
-    if (action === 'update' || action === 'stage' || action === 'end') {
-      if (!streamId) {
-        return res.status(400).json({ error: 'missing streamId' });
-      }
-      const stream = activeStreams.get(streamId);
-      if (!stream) {
-        return res.status(404).json({ error: 'stream not found or expired' });
-      }
-
-      try {
-        let updateText = text;
-        if (action === 'stage') {
-          if (Number.isInteger(stage)) {
-            stream.stageIndex = Math.max(0, Math.min(stage, (stream.stages || []).length - 1));
-            updateText = buildProgressText(stream.stages, stream.stageIndex);
-          } else {
-            const next = nextProgressText(stream.stages, stream.stageIndex);
-            stream.stageIndex = next.index;
-            updateText = next.text;
-          }
-        }
-
-        if (updateText) {
-          const updateActivity = {
-            type: 'message',
-            text: updateText,
-            textFormat: 'markdown',
-            conversation: { id: stream.conversationId },
-          };
-          const updateUrl = `${stream.serviceUrl}/v3/conversations/${encodeURIComponent(stream.conversationId)}/activities/${encodeURIComponent(stream.activityId)}`;
-          const apiRes = await fetch(updateUrl, {
-            method: 'PUT',
-            headers: { Authorization: `Bearer ${stream.botToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(updateActivity),
-            signal: AbortSignal.timeout(30_000),
-          });
-          if (!apiRes.ok) {
-            const errText = await apiRes.text();
-            throw new Error(`Activity update failed (${apiRes.status}): ${errText}`);
-          }
-        }
-
-        if (action === 'end') {
-          const baseConvId = stream.conversationId.split(';')[0];
-          recordHistoryEntry(baseConvId, {
-            timestamp: new Date().toISOString(),
-            message_id: stream.activityId,
-            user_id: 'bot',
-            user_name: botName,
-            text: (updateText || '').substring(0, 500),
-          });
-          activeStreams.delete(streamId);
-        }
-
-        res.json({ ok: true });
-      } catch (err) {
-        console.error(`[ms-teams] Stream ${action} error: ${err.message}`);
-        res.status(500).json({ error: err.message });
-      }
-      return;
-    }
-
-    res.status(400).json({ error: 'invalid action — use start, update, or end' });
   });
 
   // ── Internal media send endpoint ──
