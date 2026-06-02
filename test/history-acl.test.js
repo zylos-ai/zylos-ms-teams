@@ -39,4 +39,44 @@ describe('recordHistoryEntry ACL integration', () => {
     const matches = context.filter(m => m.message_id === 'dup-1');
     expect(matches.length).toBe(1);
   });
+
+  it('does not deduplicate distinct parenthesized text as plain text', () => {
+    const dedupChat = 'dedup-parentheses-chat';
+    const timestamp = new Date().toISOString();
+    recordHistoryEntry(dedupChat, {
+      timestamp,
+      user_id: 'user-c',
+      user_name: 'Carol',
+      text: 'Hello (world)',
+    }, config);
+    recordHistoryEntry(dedupChat, {
+      timestamp,
+      user_id: 'user-c',
+      user_name: 'Carol',
+      text: 'Hello world',
+    }, config);
+
+    const context = getInMemoryContext(dedupChat, null, 10);
+    expect(context.map(m => m.text)).toEqual(['Hello (world)', 'Hello world']);
+  });
+
+  it('still deduplicates leading Markdown syntax variants', () => {
+    const dedupChat = 'dedup-leading-markdown-chat';
+    const timestamp = new Date().toISOString();
+    recordHistoryEntry(dedupChat, {
+      timestamp,
+      user_id: 'user-d',
+      user_name: 'Dana',
+      text: '- Hello world',
+    }, config);
+    recordHistoryEntry(dedupChat, {
+      timestamp,
+      user_id: 'user-d',
+      user_name: 'Dana',
+      text: 'Hello world',
+    }, config);
+
+    const context = getInMemoryContext(dedupChat, null, 10);
+    expect(context.map(m => m.text)).toEqual(['- Hello world']);
+  });
 });

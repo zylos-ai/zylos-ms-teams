@@ -18,14 +18,20 @@ const ENTITY_MAP = {
 /**
  * Decode HTML entities (named + numeric).
  */
+function decodeCodePoint(value, fallback) {
+  const codePoint = Number(value);
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return fallback;
+  return String.fromCodePoint(codePoint);
+}
+
 function decodeEntities(text) {
   // Named entities
   let result = text.replace(/&(?:amp|lt|gt|quot|apos|nbsp|#39);/g, (match) => {
     return ENTITY_MAP[match] || match;
   });
   // Numeric entities: &#123; or &#x1a;
-  result = result.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
-  result = result.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  result = result.replace(/&#(\d+);/g, (match, code) => decodeCodePoint(code, match));
+  result = result.replace(/&#x([0-9a-fA-F]+);/g, (match, hex) => decodeCodePoint(parseInt(hex, 16), match));
   return result;
 }
 

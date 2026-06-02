@@ -74,11 +74,6 @@ function sleep(ms) {
 }
 
 async function sendViaInternal(conversationId, text, { replyToId, attachments, returnActivityId } = {}) {
-  const internalToken = readInternalToken();
-  if (!internalToken) {
-    throw new Error('Internal token not found. Is the ms-teams service running?');
-  }
-
   const port = config.port || 3978;
   const payload = {
     conversationId,
@@ -91,6 +86,11 @@ async function sendViaInternal(conversationId, text, { replyToId, attachments, r
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const internalToken = readInternalToken();
+    if (!internalToken) {
+      throw new Error('Internal token not found. Is the ms-teams service running?');
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -139,11 +139,6 @@ function parseMediaPrefix(text) {
 
 async function sendMedia(mediaType, filePath) {
   const { conversationId } = parsedEndpoint;
-  const internalToken = readInternalToken();
-  if (!internalToken) {
-    throw new Error('Internal token not found. Is the ms-teams service running?');
-  }
-
   const port = config.port || 3978;
   const body = JSON.stringify({
     conversationId,
@@ -154,6 +149,11 @@ async function sendMedia(mediaType, filePath) {
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const internalToken = readInternalToken();
+    if (!internalToken) {
+      throw new Error('Internal token not found. Is the ms-teams service running?');
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
