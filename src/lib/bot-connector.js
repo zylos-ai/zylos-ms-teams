@@ -1,3 +1,5 @@
+import { appendErrorHint } from './errors.js';
+
 function activityIdFromLocation(raw = '') {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -22,4 +24,12 @@ export async function readActivityIdFromResponse(response, { log = console.warn 
   if (headerId) return headerId;
 
   return '';
+}
+
+export async function botConnectorErrorMessage(response, prefix = 'Bot Connector API failed') {
+  const text = await response.text();
+  return appendErrorHint(`${prefix} (${response.status}): ${text}`, {
+    status: response.status,
+    headers: response.headers,
+  });
 }

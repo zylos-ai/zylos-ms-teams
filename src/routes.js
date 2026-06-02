@@ -10,7 +10,7 @@ import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
 import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 import { recordSentMessage } from './lib/sent-message-cache.js';
-import { readActivityIdFromResponse } from './lib/bot-connector.js';
+import { botConnectorErrorMessage, readActivityIdFromResponse } from './lib/bot-connector.js';
 
 function sanitizePrefix(raw) {
   if (!raw) return '';
@@ -120,8 +120,7 @@ export function registerRoutes(expressApp, deps) {
           signal: AbortSignal.timeout(30_000),
         });
         if (!apiRes.ok) {
-          const errText = await apiRes.text();
-          throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
+          throw new Error(await botConnectorErrorMessage(apiRes));
         }
         const connectorActivityId = await readActivityIdFromResponse(apiRes);
         recordSentMessage(conversationId, connectorActivityId);
