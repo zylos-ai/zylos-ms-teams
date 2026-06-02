@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getConfig, getCredentials, DATA_DIR } from './config.js';
+import { getConfig, DATA_DIR } from './config.js';
 import { acquireTokenForScope, graphRequest } from './graph.js';
 import { buildGraphUrl } from './cloud.js';
 import { writeJsonAtomic } from './atomic-write.js';

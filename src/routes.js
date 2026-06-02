@@ -1,5 +1,4 @@
 import express from 'express';
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
@@ -7,7 +6,7 @@ import { getConfig, getCredentials, getPublicUrl, resolveRouteConfig } from './l
 import { escapeHtml } from './lib/format.js';
 import { getConversationReference } from './lib/conversation-store.js';
 import { isGraphEnabled, acquireTokenForScope } from './lib/graph.js';
-import { buildAuthUrl, consumeState, exchangeCode, getDelegatedToken, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
+import { buildAuthUrl, consumeState, exchangeCode, hasAuth, sendReaction, removeReaction } from './lib/delegated-auth.js';
 import { validateClientState } from './lib/channel-subscriptions.js';
 import { recordSentMessage } from './lib/sent-message-cache.js';
 import { botConnectorErrorMessage, readActivityIdFromResponse } from './lib/bot-connector.js';

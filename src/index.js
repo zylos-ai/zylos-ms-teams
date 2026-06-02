@@ -26,7 +26,7 @@ import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHis
 import { resolveInboundMedia } from './lib/attachments.js';
 import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers, probeDelegatedAuth } from './lib/delegated-auth.js';
-import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage, getClientState } from './lib/channel-subscriptions.js';
+import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage } from './lib/channel-subscriptions.js';
 import { writeJsonAtomic } from './lib/atomic-write.js';
 import { createAccessControl, createMentionHelpers, stripThreadId } from './lib/access.js';
 import { recordHistoryEntry, getInMemoryContext, formatContextBlock, ensureReplay } from './lib/history.js';

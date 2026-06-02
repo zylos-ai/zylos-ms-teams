@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic } from './atomic-write.js';
+import { normalize, normalizeName } from './normalize.js';
 
 const HOME = process.env.HOME;
 export const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -8,12 +9,8 @@ export const ALLOWLIST_RESOLUTION_FILE = path.join(DATA_DIR, 'allowlist-resoluti
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_CONCURRENCY = 5;
 
-function normalize(value) {
-  return String(value || '').trim();
-}
-
 function key(value) {
-  return normalize(value).toLowerCase();
+  return normalizeName(value);
 }
 
 function looksLikeDirectId(value) {

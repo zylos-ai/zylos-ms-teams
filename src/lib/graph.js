@@ -91,10 +91,6 @@ function acquireToken() {
   return acquireTokenForScope('graph');
 }
 
-function acquireBotToken() {
-  return acquireTokenForScope('botframework');
-}
-
 export function decodeJwtPayload(token = '') {
   try {
     const payload = String(token).split('.')[1];
@@ -156,23 +152,13 @@ export async function probeGraphToken({ tokenProvider = acquireTokenForScope } =
 }
 
 /**
- * Convert a Bot Framework conversation ID to a Graph chat ID.
- * BF format: 19:xxx@thread.v2  or  19:xxx@unq.gbl.spaces
- * Graph format: the same ID works for /chats/{id}
- */
-function toGraphChatId(conversationId) {
-  return conversationId;
-}
-
-/**
  * Fetch recent messages from a chat (DM or group chat).
  * Returns messages in chronological order (oldest first).
  */
 export async function fetchChatHistory(conversationId, count = 10) {
   if (!isGraphEnabled()) return [];
 
-  const chatId = toGraphChatId(conversationId);
-  const encoded = encodeURIComponent(chatId);
+  const encoded = encodeURIComponent(conversationId);
 
   const data = await graphRequest(
     `/chats/${encoded}/messages?$top=${count}&$orderby=createdDateTime desc`
