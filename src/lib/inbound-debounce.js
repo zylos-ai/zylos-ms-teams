@@ -50,10 +50,19 @@ export function createInboundDebouncer({
     return true;
   }
 
+  function flushAll() {
+    let flushed = 0;
+    for (const key of Array.from(pending.keys())) {
+      if (flush(key)) flushed++;
+    }
+    return flushed;
+  }
+
   return {
     schedule,
     cancel,
     flush,
+    flushAll,
     size: () => pending.size,
     pendingKeys: () => Array.from(pending.keys()),
   };

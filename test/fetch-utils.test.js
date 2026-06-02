@@ -176,4 +176,17 @@ describe('safeFetch', () => {
       safeFetch('https://example.com/file', {}, { allowHosts: ALLOW_HOSTS })
     ).rejects.toThrow('Redirect to non-HTTPS URL');
   });
+
+  it('uses one cumulative timeout signal across redirects', async () => {
+    fetch
+      .mockResolvedValueOnce(new Response(null, {
+        status: 302,
+        headers: { Location: 'https://example.com/next' },
+      }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }));
+
+    await safeFetch('https://example.com/start', {}, { allowHosts: ALLOW_HOSTS, timeoutMs: 5000 });
+
+    expect(fetch.mock.calls[0][1].signal).toBe(fetch.mock.calls[1][1].signal);
+  });
 });

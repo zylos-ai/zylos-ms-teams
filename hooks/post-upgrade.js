@@ -13,6 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeJsonAtomic } from '../src/lib/atomic-write.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/ms-teams');
@@ -79,7 +80,7 @@ if (fs.existsSync(configPath)) {
     }
 
     if (migrated) {
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+      writeJsonAtomic(configPath, config, 0o600);
       console.log('Config migrations applied:');
       migrations.forEach(m => console.log('  - ' + m));
     } else {

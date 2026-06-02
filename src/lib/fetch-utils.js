@@ -8,35 +8,48 @@ export function timedFetch(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
 export async function safeFetch(url, options = {}, { allowHosts = [], timeoutMs = DEFAULT_TIMEOUT_MS, maxRedirects = MAX_REDIRECTS } = {}) {
   let current = url;
   const requestOrigin = new URL(url).origin;
-  for (let i = 0; i <= maxRedirects; i++) {
-    const res = await fetch(current, {
-      ...options,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new Error(`Fetch timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  timeout.unref?.();
 
-    const status = res.status;
-    if (status < 300 || status >= 400) return res;
+  try {
+    for (let i = 0; i <= maxRedirects; i++) {
+      const signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutController.signal])
+        : timeoutController.signal;
+      const res = await fetch(current, {
+        ...options,
+        redirect: 'manual',
+        signal,
+      });
 
-    const location = res.headers.get('location');
-    if (!location) return res;
+      const status = res.status;
+      if (status < 300 || status >= 400) return res;
 
-    const resolved = new URL(location, current);
-    if (resolved.protocol !== 'https:') {
-      throw new Error(`Redirect to non-HTTPS URL: ${resolved.href}`);
+      const location = res.headers.get('location');
+      if (!location) return res;
+
+      const resolved = new URL(location, current);
+      if (resolved.protocol !== 'https:') {
+        throw new Error(`Redirect to non-HTTPS URL: ${resolved.href}`);
+      }
+      if (!isHostAllowed(resolved.href, allowHosts)) {
+        throw new Error(`Redirect to disallowed host: ${resolved.href}`);
+      }
+
+      current = resolved.href;
+
+      if (resolved.origin !== requestOrigin) {
+        const { Authorization, authorization, ...safeHeaders } = options.headers || {};
+        options = { ...options, headers: safeHeaders };
+      }
     }
-    if (!isHostAllowed(resolved.href, allowHosts)) {
-      throw new Error(`Redirect to disallowed host: ${resolved.href}`);
-    }
-
-    current = resolved.href;
-
-    if (resolved.origin !== requestOrigin) {
-      const { Authorization, authorization, ...safeHeaders } = options.headers || {};
-      options = { ...options, headers: safeHeaders };
-    }
+    throw new Error(`Too many redirects (max ${maxRedirects})`);
+  } finally {
+    clearTimeout(timeout);
   }
-  throw new Error(`Too many redirects (max ${maxRedirects})`);
 }
 
 function isHostAllowed(url, allowHosts) {

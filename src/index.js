@@ -42,7 +42,7 @@ import { createInboundDebouncer } from './lib/inbound-debounce.js';
 import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
 import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
 import { buildPairingNotification, getPairingStatus, loadPairingState, markPairingPending, savePairingState } from './lib/dm-pairing.js';
-import { recordConversationActivity } from './lib/activity-store.js';
+import { flushActivityState, recordConversationActivity } from './lib/activity-store.js';
 import { selectConfiguredEntry } from './lib/allowlist.js';
 import { allowlistResolutionIntervalMs, refreshAllowlistResolution } from './lib/allowlist-resolution.js';
 import { probeCloudEndpoint } from './lib/cloud.js';
@@ -294,6 +294,7 @@ const mentions = createMentionHelpers(() => botId);
 watchConfig(async (newConfig) => {
   console.log('[ms-teams] Config reloaded');
   config = newConfig;
+  inboundDebouncer.flushAll();
   inboundDebouncer = createTeamsInboundDebouncer(config.debounceMs || 0);
   transcriptionProvider = getTranscriptionProvider(config.voiceTranscription, process.env, { modelPath: config.whisperModel || process.env.WHISPER_MODEL });
   VOICE_ENABLED = transcriptionProvider.available;
@@ -641,10 +642,11 @@ async function handleMessage(ctx) {
           onReject: (errMsg) => rejectReply(errMsg),
           onFail: failReply,
         });
-        fs.unlink(audioFile.path, () => {});
         return;
       } catch (err) {
         console.error(`[ms-teams] Voice transcription error: ${err.message}`);
+      } finally {
+        fs.unlink(audioFile.path, () => {});
       }
     }
 
@@ -835,9 +837,10 @@ async function handleMessage(ctx) {
           const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription, modelPath: config.whisperModel || process.env.WHISPER_MODEL });
           console.log(`[ms-teams] Voice transcribed (group): "${transcript.substring(0, 60)}"`);
           cleanText = `[Voice] ${transcript}`;
-          fs.unlink(audioFile.path, () => {});
         } catch (err) {
           console.error(`[ms-teams] Voice transcription error: ${err.message}`);
+        } finally {
+          fs.unlink(audioFile.path, () => {});
         }
       }
     }
@@ -1245,6 +1248,7 @@ function shutdown() {
   for (const timer of reactionContextTimers.values()) clearTimeout(timer);
   reactionContextTimers.clear();
   if (allowlistRefreshInterval) clearInterval(allowlistRefreshInterval);
+  flushActivityState();
 
   const finishExit = () => process.exit(0);
   httpServer.close(() => finishExit());

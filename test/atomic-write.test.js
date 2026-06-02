@@ -56,4 +56,15 @@ describe('writeJsonAtomic', () => {
     const stat = fs.statSync(filePath);
     expect(stat.mode & 0o777).toBe(0o600);
   });
+
+  it('enforces custom mode when a stale tmp file has looser permissions', () => {
+    const filePath = path.join(tmpDir, 'secret.json');
+    fs.writeFileSync(filePath + '.tmp', '{"stale":true}', { mode: 0o644 });
+
+    writeJsonAtomic(filePath, { secret: true }, 0o600);
+
+    const stat = fs.statSync(filePath);
+    expect(stat.mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(filePath + '.tmp')).toBe(false);
+  });
 });
