@@ -7,22 +7,14 @@
 
 import jwt from 'jsonwebtoken';
 import jwksRsa from 'jwks-rsa';
+import { getCloudConfig } from './cloud.js';
 
-// Microsoft JWKS endpoints
-const BOT_FRAMEWORK_JWKS_URI = 'https://login.botframework.com/v1/.well-known/keys';
-
-function getEntraJwksUri(tenantId) {
-  return `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
+function getEntraJwksUri(tenantId, cloud) {
+  return `https://${cloud.loginHost}/${tenantId}/discovery/v2.0/keys`;
 }
 
-// Accepted issuers
-const BOT_FRAMEWORK_ISSUERS = [
-  'https://api.botframework.com',
-  'https://sts.windows.net/',
-];
-
-function getEntraIssuer(tenantId) {
-  return `https://login.microsoftonline.com/${tenantId}/v2.0`;
+function getEntraIssuer(tenantId, cloud) {
+  return `https://${cloud.loginHost}/${tenantId}/v2.0`;
 }
 
 /**
@@ -31,16 +23,18 @@ function getEntraIssuer(tenantId) {
  * @param {object} options
  * @param {string} options.appId - The bot's Microsoft App ID (audience claim)
  * @param {string} [options.tenantId] - Optional tenant ID for single-tenant validation
+ * @param {string} [options.cloud] - Microsoft cloud: public | gccHigh | dod | china
  * @returns {function} Express middleware
  */
-export function createJwtMiddleware({ appId, tenantId } = {}) {
+export function createJwtMiddleware({ appId, tenantId, cloud: cloudName = 'public' } = {}) {
+  const cloud = getCloudConfig(cloudName);
   if (!appId) {
     console.warn('[ms-teams/auth] No appId provided, JWT validation will reject all requests');
   }
 
   // Create JWKS clients with built-in caching
   const botFrameworkJwksClient = jwksRsa({
-    jwksUri: BOT_FRAMEWORK_JWKS_URI,
+    jwksUri: cloud.botFrameworkJwksUri,
     cache: true,
     cacheMaxAge: 24 * 60 * 60 * 1000, // 24 hours
     rateLimit: true,
@@ -50,7 +44,7 @@ export function createJwtMiddleware({ appId, tenantId } = {}) {
   let entraJwksClient = null;
   if (tenantId) {
     entraJwksClient = jwksRsa({
-      jwksUri: getEntraJwksUri(tenantId),
+      jwksUri: getEntraJwksUri(tenantId, cloud),
       cache: true,
       cacheMaxAge: 24 * 60 * 60 * 1000,
       rateLimit: true,
@@ -59,11 +53,13 @@ export function createJwtMiddleware({ appId, tenantId } = {}) {
   }
 
   // Build accepted issuers list
-  const acceptedIssuers = [...BOT_FRAMEWORK_ISSUERS];
+  const acceptedIssuers = [cloud.botFrameworkIssuer, cloud.legacyStsIssuer].filter(Boolean);
   if (tenantId) {
-    acceptedIssuers.push(getEntraIssuer(tenantId));
+    acceptedIssuers.push(getEntraIssuer(tenantId, cloud));
     // Legacy issuer format with tenant ID
-    acceptedIssuers.push(`https://sts.windows.net/${tenantId}/`);
+    if (cloud.legacyStsIssuer) {
+      acceptedIssuers.push(`${cloud.legacyStsIssuer}${tenantId}/`);
+    }
   }
 
   /**

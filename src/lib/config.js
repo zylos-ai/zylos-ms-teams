@@ -18,6 +18,8 @@ export const DEFAULT_CONFIG = {
   dmWelcomeMessage: '',
   promptStarters: ['What can you do?', 'Help me draft a message', 'Summarize a document'],
   welcomeCardTitle: null,
+  cloud: 'public',
+  debounceMs: 0,
   voiceTranscription: 'auto',
   whisperModel: '',
   groupPolicy: 'allowlist',
@@ -46,6 +48,8 @@ export function mergeConfigWithDefaults(parsed = {}) {
       ? parsed.promptStarters
       : DEFAULT_CONFIG.promptStarters,
     welcomeCardTitle: parsed.welcomeCardTitle ?? DEFAULT_CONFIG.welcomeCardTitle,
+    cloud: parsed.cloud || process.env.MSTEAMS_CLOUD || DEFAULT_CONFIG.cloud,
+    debounceMs: Number.isFinite(Number(parsed.debounceMs)) ? Math.max(0, Number(parsed.debounceMs)) : DEFAULT_CONFIG.debounceMs,
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})

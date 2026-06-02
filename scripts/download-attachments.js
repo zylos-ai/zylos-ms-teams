@@ -5,9 +5,8 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { acquireTokenForScope } from '../src/lib/graph.js';
 import { downloadGraphMedia } from '../src/lib/attachments.js';
-
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
+import { getConfig } from '../src/lib/config.js';
+import { buildGraphUrl } from '../src/lib/cloud.js';
 
 const args = process.argv.slice(2);
 
@@ -26,15 +25,15 @@ let messageUrls = [];
 if (type === 'channel') {
   if (args.length < 4) usage();
   const [, teamId, channelId, messageId, rootMessageId] = args;
-  const base = `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`;
+  const base = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`;
   if (rootMessageId) {
-    messageUrls.push(`${base}/messages/${encodeURIComponent(rootMessageId)}/replies/${encodeURIComponent(messageId)}`);
+    messageUrls.push(buildGraphUrl(`${base}/messages/${encodeURIComponent(rootMessageId)}/replies/${encodeURIComponent(messageId)}`, getConfig().cloud));
   }
-  messageUrls.push(`${base}/messages/${encodeURIComponent(messageId)}`);
+  messageUrls.push(buildGraphUrl(`${base}/messages/${encodeURIComponent(messageId)}`, getConfig().cloud));
 } else if (type === 'chat') {
   if (args.length < 3) usage();
   const [, chatId, messageId] = args;
-  messageUrls.push(`${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`);
+  messageUrls.push(buildGraphUrl(`/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`, getConfig().cloud));
 } else {
   usage();
 }

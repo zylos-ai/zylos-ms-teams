@@ -12,6 +12,7 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { loadConfig, saveConfig, getCredentials } from './lib/config.js';
 import { getAuthenticatedUsers, revokeAuth, buildAuthUrl } from './lib/delegated-auth.js';
+import { formatDoctorReport, runDoctor } from './lib/doctor.js';
 
 const VALID_GROUP_POLICIES = new Set(['disabled', 'allowlist', 'open']);
 
@@ -458,6 +459,13 @@ const commands = {
     console.log(`  Teams App Catalog ID: ${config.teamsAppCatalogId || 'not set (DM reactions disabled)'}`);
   },
 
+  'doctor': async () => {
+    const config = loadConfig();
+    const results = await runDoctor(config);
+    console.log(formatDoctorReport(results));
+    if (results.some(result => !result.ok)) process.exitCode = 1;
+  },
+
   'auth-status': () => {
     const users = getAuthenticatedUsers();
     if (users.length === 0) {
@@ -540,6 +548,7 @@ Commands:
   show-owner                          Show current owner
 
   Graph API:
+  doctor                              Run configuration and connectivity diagnostics
   graph-status                        Show Graph API configuration status
   set-teams-app-catalog-id <id>       Set Teams app catalog ID (enables DM reactions)
 
@@ -564,8 +573,8 @@ const args = process.argv.slice(2);
 const command = args[0] || 'help';
 
 if (commands[command]) {
-  commands[command](...args.slice(1));
-  process.exit(0);
+  await commands[command](...args.slice(1));
+  process.exit(process.exitCode || 0);
 } else {
   console.error(`Unknown command: ${command}`);
   commands.help();

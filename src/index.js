@@ -38,6 +38,7 @@ import { loadSeenDmUsers, saveSeenDmUsers, sendDmWelcomeIfFirstSeen } from './li
 import { buildWelcomeCardAttachment } from './lib/welcome-card.js';
 import { isSentMessage } from './lib/sent-message-cache.js';
 import { getCachedThreadParent, markThreadParentInjected, shouldInjectThreadParent } from './lib/thread-parent-cache.js';
+import { createInboundDebouncer } from './lib/inbound-debounce.js';
 import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
 import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
 
@@ -109,6 +110,35 @@ function markDmUserSeen(aadObjectId) {
   return true;
 }
 
+function mergeCallbacks(previousCallbacks = {}, nextCallbacks = {}) {
+  const merged = {};
+  for (const key of ['onReject', 'onFail']) {
+    const callbacks = [previousCallbacks[key], nextCallbacks[key]].filter(fn => typeof fn === 'function');
+    if (callbacks.length === 1) {
+      [merged[key]] = callbacks;
+    } else if (callbacks.length > 1) {
+      merged[key] = (...args) => {
+        for (const callback of callbacks) callback(...args);
+      };
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function createTeamsInboundDebouncer(delayMs) {
+  return createInboundDebouncer({
+    delayMs,
+    mergeValues: (previous, next) => ({
+      ...next,
+      msg: [previous.msg, next.msg].filter(Boolean).join('\n\n'),
+      callbacks: mergeCallbacks(previous.callbacks, next.callbacks),
+    }),
+  });
+}
+
+let inboundDebouncer = createTeamsInboundDebouncer(config.debounceMs || 0);
+
+
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
@@ -140,6 +170,7 @@ const mentions = createMentionHelpers(() => botId);
 watchConfig(async (newConfig) => {
   console.log('[ms-teams] Config reloaded');
   config = newConfig;
+  inboundDebouncer = createTeamsInboundDebouncer(config.debounceMs || 0);
   transcriptionProvider = getTranscriptionProvider(config.voiceTranscription, process.env, { modelPath: config.whisperModel || process.env.WHISPER_MODEL });
   VOICE_ENABLED = transcriptionProvider.available;
   if (!newConfig.enabled) {
@@ -159,6 +190,13 @@ function recordHistory(chatId, entry) {
   recordHistoryEntry(chatId, entry, config);
 }
 
+function dispatchToC4(endpoint, msg, callbacks) {
+  const key = endpoint.split('|')[0] || endpoint;
+  inboundDebouncer.schedule(key, { endpoint, msg, callbacks }, ({ endpoint, msg, callbacks }) => {
+    sendToC4('ms-teams', endpoint, msg, callbacks);
+  });
+}
+
 // ── Express + HTTP Server ──
 
 const expressApp = express();
@@ -167,6 +205,7 @@ if (credentials.appId) {
   const jwtMiddleware = createJwtMiddleware({
     appId: credentials.appId,
     tenantId: credentials.tenantId || undefined,
+    cloud: config.cloud || 'public',
   });
   expressApp.post('/api/messages', jwtMiddleware);
 }
@@ -211,7 +250,7 @@ function startTyping(conversationId) {
     try {
       const ref = await getConversationReference(baseId);
       if (!ref?.serviceUrl) return;
-      const token = await acquireTokenForScope('https://api.botframework.com/.default');
+      const token = await acquireTokenForScope('botframework');
       const serviceUrl = ref.serviceUrl.replace(/\/$/, '');
       const url = `${serviceUrl}/v3/conversations/${encodeURIComponent(baseId)}/activities`;
       await fetch(url, {
@@ -424,7 +463,7 @@ async function handleMessage(ctx) {
         console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
         const msg = appendTimezoneTag(formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply }), activity);
         startTyping(conversationId);
-        sendToC4('ms-teams', endpoint, msg, {
+        dispatchToC4(endpoint, msg, {
           onReject: (errMsg) => rejectReply(errMsg),
           onFail: failReply,
         });
@@ -438,7 +477,7 @@ async function handleMessage(ctx) {
     let msg = appendTimezoneTag(formatMessage('dm', senderName, text, { quotedReply }), activity);
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     startTyping(conversationId);
-    sendToC4('ms-teams', endpoint, msg, {
+    dispatchToC4(endpoint, msg, {
       onReject: (errMsg) => rejectReply(errMsg),
       onFail: failReply,
     });
@@ -633,7 +672,7 @@ async function handleMessage(ctx) {
       msg += ` ---- file: ${escapeXml(media.path)}`;
     }
     if (!smartNoMention && convType !== 'channel') startTyping(conversationId);
-    sendToC4('ms-teams', endpoint, msg, {
+    dispatchToC4(endpoint, msg, {
       onReject: (errMsg) => rejectReply(errMsg),
       onFail: failReply,
     });
@@ -756,7 +795,7 @@ async function handleChannelNotification(notification) {
   msg += ` ---- download: node ~/zylos/.claude/skills/ms-teams/scripts/download-attachments.js ${dlArgs}`;
 
   console.log(`[ms-teams/subs] Smart channel message from ${senderName}: ${text.substring(0, 50)}${hasAttachments ? ` (${graphAttachments.length} attachment(s))` : ''}...`);
-  sendToC4('ms-teams', endpoint, msg);
+  dispatchToC4(endpoint, msg);
 }
 
 // ── Teams Event Handlers ──
@@ -795,7 +834,7 @@ async function handleMessageUpdate(ctx) {
   const groupName = convType === 'dm' ? undefined : access.getConversationName(convType, conversationId);
   const msg = formatMessage(convType, senderName, editedMessageText(text), { groupName });
   const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
-  sendToC4('ms-teams', endpoint, msg);
+  dispatchToC4(endpoint, msg);
 }
 
 async function handleMessageDelete(ctx) {
@@ -813,7 +852,7 @@ async function handleMessageDelete(ctx) {
   const groupName = convType === 'dm' ? undefined : access.getConversationName(convType, conversationId);
   const msg = formatMessage(convType, senderName, deletedMessageText(senderName), { groupName });
   const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
-  sendToC4('ms-teams', endpoint, msg);
+  dispatchToC4(endpoint, msg);
 }
 
 async function handleInvoke(ctx) {
@@ -835,7 +874,7 @@ async function handleInvoke(ctx) {
   const convType = getConversationType(activity);
   const payload = extractCardActionPayload(activity);
   const endpoint = buildEndpoint(conversationId, { type: convType, aadObjectId: senderAadObjectId, activityId: activity.id });
-  sendToC4('ms-teams', endpoint, cardActionMessage(senderName, payload));
+  dispatchToC4(endpoint, cardActionMessage(senderName, payload));
   await sendInvokeResponse(ctx);
 }
 

@@ -6,6 +6,7 @@ vi.mock('../src/lib/config.js', () => ({
     appPassword: 'test-secret',
     tenantId: 'test-tenant',
   }),
+  getConfig: () => ({ cloud: 'public' }),
   DATA_DIR: '/tmp/test-ms-teams',
 }));
 

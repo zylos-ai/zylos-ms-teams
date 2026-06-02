@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getConfig } from './config.js';
 import { acquireTokenForScope, MEDIA_DIR, isGraphEnabled } from './graph.js';
 import { timedFetch, safeFetch } from './fetch-utils.js';
 import { extractChannelIds } from './format.js';
+import { buildGraphUrl } from './cloud.js';
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const BOT_FRAMEWORK_SCOPE = 'https://api.botframework.com/.default';
-const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 
 const ATTACHMENT_TAG_RE = /<attachment[^>]+id=["']([^"']+)["'][^>]*>/gi;
@@ -14,17 +13,21 @@ const IMG_SRC_RE = /<img[^>]+src=["']([^"']+)["'][^>]*/gi;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|bmp|webp|svg|ico|tiff?)$/i;
 
 const DEFAULT_MEDIA_ALLOW_HOSTS = [
-  'graph.microsoft.com', 'graph.microsoft.us', 'graph.microsoft.de', 'graph.microsoft.cn',
+  'graph.microsoft.com', 'graph.microsoft.us', 'dod-graph.microsoft.us',
+  'graph.microsoft.de', 'graph.microsoft.cn', 'microsoftgraph.chinacloudapi.cn',
   'sharepoint.com', 'sharepoint.us', 'sharepoint.de', 'sharepoint.cn', 'sharepoint-df.com',
   '1drv.ms', 'onedrive.com', 'teams.microsoft.com', 'teams.cdn.office.net',
   'statics.teams.cdn.office.net', 'office.com', 'office.net',
   'asm.skype.com', 'ams.skype.com', 'media.ams.skype.com',
-  'trafficmanager.net', 'blob.core.windows.net', 'azureedge.net', 'microsoft.com',
+  'trafficmanager.net', 'botframework.com', 'api.botframework.com', 'api.botframework.us',
+  'api.botframework.azure.cn', 'blob.core.windows.net', 'azureedge.net', 'microsoft.com',
 ];
 
 const DEFAULT_MEDIA_AUTH_ALLOW_HOSTS = [
-  'api.botframework.com', 'botframework.com', 'smba.trafficmanager.net',
-  'graph.microsoft.com', 'graph.microsoft.us', 'graph.microsoft.de', 'graph.microsoft.cn',
+  'api.botframework.com', 'api.botframework.us', 'api.botframework.azure.cn',
+  'botframework.com', 'smba.trafficmanager.net',
+  'graph.microsoft.com', 'graph.microsoft.us', 'dod-graph.microsoft.us',
+  'graph.microsoft.de', 'graph.microsoft.cn', 'microsoftgraph.chinacloudapi.cn',
 ];
 
 const GRAPH_SHARED_LINK_HOST_SUFFIXES = [
@@ -65,7 +68,7 @@ function isGraphSharedLinkUrl(url) {
 
 function tryBuildGraphSharesUrl(url) {
   if (!isGraphSharedLinkUrl(url)) return undefined;
-  return `${GRAPH_BASE}/shares/${encodeGraphShareId(url)}/driveItem/content`;
+  return buildGraphUrl(`/shares/${encodeGraphShareId(url)}/driveItem/content`, getConfig().cloud);
 }
 
 function normalizeServiceUrl(serviceUrl) {
@@ -178,10 +181,11 @@ async function saveBuffer(buffer, filename) {
 
 function scopeCandidatesForUrl(url) {
   const host = safeHostname(url);
-  if (host.endsWith('graph.microsoft.com') || host.endsWith('sharepoint.com') ||
+  if (host.includes('graph.microsoft') || host.includes('microsoftgraph.chinacloudapi.cn') ||
+      host.endsWith('sharepoint.com') ||
       host.endsWith('1drv.ms') || host.includes('sharepoint'))
-    return [GRAPH_SCOPE, BOT_FRAMEWORK_SCOPE];
-  return [BOT_FRAMEWORK_SCOPE, GRAPH_SCOPE];
+    return ['graph', 'botframework'];
+  return ['botframework', 'graph'];
 }
 
 async function fetchWithAuthFallback(url, tokenProvider) {
@@ -281,7 +285,7 @@ async function downloadBotFrameworkAttachments({ serviceUrl, attachmentIds, toke
 
   let accessToken;
   try {
-    accessToken = await tokenProvider(BOT_FRAMEWORK_SCOPE);
+    accessToken = await tokenProvider('botframework');
   } catch (err) {
     console.warn(`[ms-teams/attachments] BF token failed: ${err.message}`);
     return [];
@@ -343,7 +347,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
 
   let accessToken;
   try {
-    accessToken = await tokenProvider(GRAPH_SCOPE);
+    accessToken = await tokenProvider('graph');
   } catch (err) {
     console.warn(`[ms-teams/attachments] Graph token failed: ${err.message}`);
     return [];
@@ -378,7 +382,7 @@ async function downloadGraphMedia({ messageUrls, tokenProvider }) {
     for (const att of attachments) {
       if ((att.contentType || '').toLowerCase() !== 'reference' || !att.contentUrl) continue;
       try {
-        const sharesUrl = `${GRAPH_BASE}/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`;
+        const sharesUrl = buildGraphUrl(`/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`, getConfig().cloud);
         const res = await safeFetch(sharesUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
         }, { allowHosts: DEFAULT_MEDIA_ALLOW_HOSTS, timeoutMs: 60_000 });
@@ -473,12 +477,12 @@ function buildGraphMessageUrls({ conversationType, conversationId, activity }) {
     if (threadRootId) {
       for (const c of candidates) {
         if (c === threadRootId) continue;
-        urls.push(`${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies/${encodeURIComponent(c)}`);
+        urls.push(buildGraphUrl(`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies/${encodeURIComponent(c)}`, getConfig().cloud));
       }
     }
     if (candidates.size === 0 && threadRootId) candidates.add(threadRootId);
     for (const c of candidates)
-      urls.push(`${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(c)}`);
+      urls.push(buildGraphUrl(`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(c)}`, getConfig().cloud));
     return [...new Set(urls)];
   }
 
@@ -486,7 +490,7 @@ function buildGraphMessageUrls({ conversationType, conversationId, activity }) {
   if (!chatId) return [];
   if (candidates.size === 0 && replyToId) candidates.add(replyToId);
   return [...candidates].map(c =>
-    `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(c)}`
+    buildGraphUrl(`/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(c)}`, getConfig().cloud)
   );
 }
 
@@ -496,14 +500,14 @@ export {
   encodeGraphShareId, isGraphSharedLinkUrl, tryBuildGraphSharesUrl,
   normalizeServiceUrl, inferPlaceholder,
   isDownloadableAttachment, isHtmlAttachment, extractHtmlContent, extractHtmlAttachmentIds,
-  resolveDownloadCandidate, mimeFromHeaderAndName, buildGraphMessageUrls,
+  resolveDownloadCandidate, mimeFromHeaderAndName, scopeCandidatesForUrl, buildGraphMessageUrls,
   downloadGraphMedia,
 };
 
 async function downloadGraphNearbyFiles({ conversationType, conversationId, activity, tokenProvider }) {
   let accessToken;
   try {
-    accessToken = await tokenProvider(GRAPH_SCOPE);
+    accessToken = await tokenProvider('graph');
   } catch { return []; }
   if (!accessToken) return [];
 
@@ -514,12 +518,12 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
     const threadMatch = (activity.conversation?.id || '').match(/;messageid=(\d+)/);
     const threadRootId = threadMatch ? threadMatch[1] : '';
     url = threadRootId
-      ? `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies?$top=5&$orderby=createdDateTime desc`
-      : `${GRAPH_BASE}/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=5&$orderby=createdDateTime desc`;
+      ? buildGraphUrl(`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(threadRootId)}/replies?$top=5&$orderby=createdDateTime desc`, getConfig().cloud)
+      : buildGraphUrl(`/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages?$top=5&$orderby=createdDateTime desc`, getConfig().cloud);
   } else {
     const chatId = (conversationId || '').trim();
     if (!chatId) return [];
-    url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=5&$orderby=createdDateTime desc`;
+    url = buildGraphUrl(`/chats/${encodeURIComponent(chatId)}/messages?$top=5&$orderby=createdDateTime desc`, getConfig().cloud);
   }
 
   let messages;
@@ -545,7 +549,7 @@ async function downloadGraphNearbyFiles({ conversationType, conversationId, acti
     for (const att of atts) {
       if ((att.contentType || '').toLowerCase() !== 'reference' || !att.contentUrl) continue;
       try {
-        const sharesUrl = `${GRAPH_BASE}/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`;
+        const sharesUrl = buildGraphUrl(`/shares/${encodeGraphShareId(att.contentUrl)}/driveItem/content`, getConfig().cloud);
         const res = await safeFetch(sharesUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
         }, { allowHosts: DEFAULT_MEDIA_ALLOW_HOSTS, timeoutMs: 60_000 });
