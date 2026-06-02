@@ -320,6 +320,21 @@ const commands = {
     }
   },
 
+  'set-dm-welcome': (...parts) => {
+    const message = parts.join(' ').trim();
+    const config = loadConfig();
+    config.dmWelcomeMessage = message;
+    saveConfigOrExit(config);
+    console.log(message ? 'DM welcome message updated' : 'DM welcome message disabled');
+    console.log('Run: pm2 restart zylos-ms-teams');
+  },
+
+  'show-dm-welcome': () => {
+    const config = loadConfig();
+    const message = config.dmWelcomeMessage || '';
+    console.log(message ? message : 'DM welcome message disabled');
+  },
+
   'show-owner': () => {
     const config = loadConfig();
     const owner = config.owner || {};
@@ -519,6 +534,8 @@ Commands:
   list-dm-allow                       Show DM policy and allowFrom list
   add-dm-allow <aad_object_id>        Add user to dmAllowFrom
   remove-dm-allow <aad_object_id>     Remove user from dmAllowFrom
+  set-dm-welcome <message>            Set DM first-contact welcome message
+  show-dm-welcome                     Show DM welcome message
 
   show-owner                          Show current owner
 

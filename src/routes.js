@@ -75,9 +75,9 @@ export function registerRoutes(expressApp, deps) {
       return res.status(403).json({ error: 'unauthorized' });
     }
 
-    const { conversationId, text, type, replyToId } = req.body || {};
-    if (!conversationId || !text) {
-      return res.status(400).json({ error: 'missing conversationId or text' });
+    const { conversationId, text, type, replyToId, attachments } = req.body || {};
+    if (!conversationId || (!text && !attachments?.length)) {
+      return res.status(400).json({ error: 'missing conversationId or message content' });
     }
 
     stopTyping(conversationId);
@@ -94,11 +94,12 @@ export function registerRoutes(expressApp, deps) {
         const serviceUrl = reference.serviceUrl.replace(/\/$/, '');
         const activity = {
           type: 'message',
-          text,
+          text: text || '',
           textFormat: 'markdown',
           conversation: { id: conversationId },
           replyToId,
         };
+        if (attachments?.length) activity.attachments = attachments;
         const apiUrl = `${serviceUrl}/v3/conversations/${encodeURIComponent(conversationId)}/activities`;
         const apiRes = await fetch(apiUrl, {
           method: 'POST',
@@ -114,7 +115,8 @@ export function registerRoutes(expressApp, deps) {
           throw new Error(`Bot Connector API failed (${apiRes.status}): ${errText}`);
         }
       } else {
-        const activity = { type: 'message', text, textFormat: 'markdown' };
+        const activity = { type: 'message', text: text || '', textFormat: 'markdown' };
+        if (attachments?.length) activity.attachments = attachments;
         await teamsApp.send(baseConvId, activity);
       }
 
@@ -123,7 +125,7 @@ export function registerRoutes(expressApp, deps) {
         message_id: `bot:${Date.now()}`,
         user_id: 'bot',
         user_name: botName,
-        text: text.substring(0, 500),
+        text: (text || '[card]').substring(0, 500),
       });
 
       res.json({ ok: true });

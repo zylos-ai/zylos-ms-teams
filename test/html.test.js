@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { htmlToText, extractQuotedReply, extractReplyBlockquote } from '../src/lib/html.js';
+import { htmlToText, htmlToMarkdown, extractQuotedReply, extractReplyBlockquote } from '../src/lib/html.js';
 
 describe('htmlToText', () => {
   it('returns empty string for null/undefined/empty', () => {
@@ -110,6 +110,25 @@ describe('htmlToText', () => {
     const result = htmlToText('<h1>Title</h1><h3>Sub</h3>');
     expect(result).toContain('Title');
     expect(result).toContain('Sub');
+  });
+});
+
+describe('htmlToMarkdown', () => {
+  it('preserves rich formatting as markdown', () => {
+    const result = htmlToMarkdown('<h2>Title</h2><p><strong>bold</strong> and <em>em</em></p><a href="https://example.com">link</a>');
+    expect(result).toContain('## Title');
+    expect(result).toContain('**bold**');
+    expect(result).toContain('_em_');
+    expect(result).toContain('[link](https://example.com)');
+  });
+
+  it('converts lists, blockquotes, and code blocks', () => {
+    const result = htmlToMarkdown('<blockquote>quote</blockquote><ul><li>a</li><li>b</li></ul><pre><code>x = 1</code></pre>');
+    expect(result).toContain('> quote');
+    expect(result).toContain('- a');
+    expect(result).toContain('- b');
+    expect(result).toContain('```');
+    expect(result).toContain('x = 1');
   });
 });
 

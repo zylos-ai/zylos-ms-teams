@@ -15,6 +15,9 @@ export const DEFAULT_CONFIG = {
   },
   dmPolicy: 'owner',
   dmAllowFrom: [],
+  dmWelcomeMessage: '',
+  voiceTranscription: 'auto',
+  whisperModel: '',
   groupPolicy: 'allowlist',
   groups: {},
   channels: {},
@@ -36,6 +39,7 @@ export function mergeConfigWithDefaults(parsed = {}) {
       ...(parsed.owner || {})
     },
     channels: parsed.channels || {},
+    groups: parsed.groups || {},
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})
