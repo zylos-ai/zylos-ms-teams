@@ -17,6 +17,7 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import { getConfig, DATA_DIR } from '../src/lib/config.js';
 import { splitMarkdownMessage } from '../src/lib/markdown-split.js';
+import { parseCardMarker } from '../src/lib/card-send.js';
 
 const MAX_LENGTH = 4000;
 
@@ -67,7 +68,7 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function sendViaInternal(conversationId, text, { replyToId } = {}) {
+async function sendViaInternal(conversationId, text, { replyToId, attachments } = {}) {
   const internalToken = readInternalToken();
   if (!internalToken) {
     throw new Error('Internal token not found. Is the ms-teams service running?');
@@ -80,6 +81,7 @@ async function sendViaInternal(conversationId, text, { replyToId } = {}) {
     type: parsedEndpoint.type || 'dm'
   };
   if (replyToId) payload.replyToId = replyToId;
+  if (attachments?.length) payload.attachments = attachments;
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -244,6 +246,13 @@ async function sendText(text) {
   console.log(`Sent ${chunks.length} chunks`);
 }
 
+async function sendCard(attachment) {
+  const { conversationId } = parsedEndpoint;
+  const opts = { attachments: [attachment] };
+  if (parsedEndpoint.msg) opts.replyToId = parsedEndpoint.msg;
+  await sendViaInternal(conversationId, '', opts);
+}
+
 async function removeThinkingReaction() {
   const internalToken = readInternalToken();
   if (!internalToken) return;
@@ -267,7 +276,12 @@ async function send() {
     if (media) {
       await sendMedia(media.mediaType, media.filePath);
     } else {
-      await sendText(message);
+      const card = parseCardMarker(message);
+      if (card) {
+        await sendCard(card);
+      } else {
+        await sendText(message);
+      }
     }
     await removeThinkingReaction();
     console.log('Message sent successfully');
