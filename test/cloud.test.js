@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGraphUrl, buildLoginUrl, getCloudConfig, normalizeCloudName } from '../src/lib/cloud.js';
+import { buildGraphUrl, buildLoginUrl, buildOpenIdConfigUrl, getCloudConfig, normalizeCloudName, probeCloudEndpoint } from '../src/lib/cloud.js';
 
 describe('Microsoft cloud config', () => {
   it('normalizes cloud aliases', () => {
@@ -25,9 +25,45 @@ describe('Microsoft cloud config', () => {
     expect(buildLoginUrl('tenant-1', 'china', 'oauth2/v2.0/authorize')).toBe('https://login.chinacloudapi.cn/tenant-1/oauth2/v2.0/authorize');
   });
 
+  it('builds cloud-specific OpenID metadata URLs', () => {
+    expect(buildOpenIdConfigUrl('tenant-1', 'public')).toBe('https://login.microsoftonline.com/tenant-1/v2.0/.well-known/openid-configuration');
+    expect(buildOpenIdConfigUrl('tenant-1', 'gccHigh')).toBe('https://login.microsoftonline.us/tenant-1/v2.0/.well-known/openid-configuration');
+  });
+
   it('builds cloud-specific Graph URLs', () => {
     expect(buildGraphUrl('/me', 'public')).toBe('https://graph.microsoft.com/v1.0/me');
     expect(buildGraphUrl('/me', 'dod')).toBe('https://dod-graph.microsoft.us/v1.0/me');
     expect(buildGraphUrl('https://example.com/path', 'china')).toBe('https://example.com/path');
+  });
+
+  it('passes cloud endpoint probe when metadata host matches configured cloud', async () => {
+    const result = await probeCloudEndpoint({
+      tenantId: 'tenant-1',
+      cloud: 'gccHigh',
+      fetchImpl: async (url) => new Response(JSON.stringify({
+        issuer: 'https://login.microsoftonline.us/tenant-1/v2.0',
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('login.microsoftonline.us');
+  });
+
+  it('warns when cloud endpoint metadata comes from another cloud', async () => {
+    const result = await probeCloudEndpoint({
+      tenantId: 'tenant-1',
+      cloud: 'gccHigh',
+      fetchImpl: async () => ({
+        ok: true,
+        url: 'https://login.microsoftonline.com/tenant-1/v2.0/.well-known/openid-configuration',
+        json: async () => ({ issuer: 'https://login.microsoftonline.com/tenant-1/v2.0' }),
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('login.microsoftonline.com');
   });
 });

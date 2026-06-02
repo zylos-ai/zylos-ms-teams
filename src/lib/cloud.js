@@ -41,6 +41,16 @@ export const CLOUDS = {
   },
 };
 
+export function expectedCloudHosts(rawCloud = 'public') {
+  const cloud = getCloudConfig(rawCloud);
+  return [...new Set([
+    cloud.loginHost,
+    new URL(cloud.graphBase).host,
+    new URL(cloud.graphScope).host,
+    new URL(cloud.botFrameworkScope).host,
+  ])];
+}
+
 const ALIASES = {
   global: 'public',
   commercial: 'public',
@@ -72,8 +82,59 @@ export function buildLoginUrl(tenantId, rawCloud = 'public', path = 'oauth2/v2.0
   return `https://${cloud.loginHost}/${tenantId}/${path.replace(/^\/+/, '')}`;
 }
 
+export function buildOpenIdConfigUrl(tenantId, rawCloud = 'public') {
+  const cloud = getCloudConfig(rawCloud);
+  return `https://${cloud.loginHost}/${tenantId}/v2.0/.well-known/openid-configuration`;
+}
+
 export function buildGraphUrl(path, rawCloud = 'public') {
   const cloud = getCloudConfig(rawCloud);
   if (String(path || '').startsWith('http')) return path;
   return `${cloud.graphBase}${String(path || '').startsWith('/') ? '' : '/'}${path || ''}`;
+}
+
+function hostFromUrl(value = '') {
+  try {
+    return new URL(value).host;
+  } catch {
+    return '';
+  }
+}
+
+export async function probeCloudEndpoint({
+  tenantId,
+  cloud: rawCloud = 'public',
+  fetchImpl = fetch,
+} = {}) {
+  if (!tenantId) {
+    return { ok: false, detail: 'tenant id missing' };
+  }
+
+  const cloud = getCloudConfig(rawCloud);
+  const url = buildOpenIdConfigUrl(tenantId, cloud.name);
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) });
+  const responseHost = hostFromUrl(res.url || url);
+
+  if (!res.ok) {
+    return { ok: false, detail: `metadata probe failed: HTTP ${res.status}` };
+  }
+
+  const metadata = await res.json();
+  const issuer = metadata.issuer || '';
+  const issuerHost = hostFromUrl(issuer);
+  const expectedHosts = expectedCloudHosts(cloud.name);
+  const actualHosts = [responseHost, issuerHost].filter(Boolean);
+  const mismatched = actualHosts.filter(host => !expectedHosts.includes(host));
+
+  if (mismatched.length > 0) {
+    return {
+      ok: false,
+      detail: `configured ${cloud.name} expects ${cloud.loginHost}; got ${[...new Set(mismatched)].join(', ')}`,
+    };
+  }
+
+  return {
+    ok: true,
+    detail: `${cloud.name} login metadata matches ${cloud.loginHost}`,
+  };
 }

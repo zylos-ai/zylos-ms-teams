@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
-import { getConfig, DATA_DIR } from '../src/lib/config.js';
+import { getConfig, DATA_DIR, resolveRouteConfig } from '../src/lib/config.js';
 import { splitMarkdownMessage } from '../src/lib/markdown-split.js';
 import { parseCardMarker } from '../src/lib/card-send.js';
 
@@ -55,6 +55,11 @@ if (!config.enabled) {
   process.exit(1);
 }
 
+const routeConfig = resolveRouteConfig(parsedEndpoint.type || 'dm', parsedEndpoint.conversationId, config);
+function threadedReplyToId() {
+  if (routeConfig.replyStyle === 'new') return null;
+  return parsedEndpoint.msg || null;
+}
 
 function readInternalToken() {
   try {
@@ -185,7 +190,7 @@ async function sendMedia(mediaType, filePath) {
 async function sendText(text) {
   const chunks = splitMarkdownMessage(text, MAX_LENGTH);
   const { conversationId } = parsedEndpoint;
-  const triggerMsgId = parsedEndpoint.msg || null;
+  const triggerMsgId = threadedReplyToId();
 
   if (chunks.length <= 1) {
     const opts = {};
@@ -217,7 +222,8 @@ async function sendText(text) {
 async function sendCard(attachment) {
   const { conversationId } = parsedEndpoint;
   const opts = { attachments: [attachment] };
-  if (parsedEndpoint.msg) opts.replyToId = parsedEndpoint.msg;
+  const triggerMsgId = threadedReplyToId();
+  if (triggerMsgId) opts.replyToId = triggerMsgId;
   await sendViaInternal(conversationId, '', opts);
 }
 

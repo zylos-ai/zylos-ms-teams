@@ -272,7 +272,7 @@ const commands = {
   },
 
   'set-dm-policy': (policy) => {
-    const valid = ['open', 'allowlist', 'owner', 'pairing'];
+    const valid = ['open', 'allowlist', 'owner', 'pairing', 'disabled'];
     policy = String(policy || '').trim().toLowerCase();
     if (!valid.includes(policy)) {
       console.error(`Usage: admin.js set-dm-policy <${valid.join('|')}>`);
@@ -286,6 +286,7 @@ const commands = {
       allowlist: 'Only dmAllowFrom users can DM',
       owner: 'Only owner can DM',
       pairing: 'Unknown users request approval before DM access',
+      disabled: 'All DMs receive the configured disabled reply',
     };
     console.log(`DM policy set to: ${policy} (${desc[policy]})`);
     console.log('Run: pm2 restart zylos-ms-teams');
@@ -603,7 +604,7 @@ Commands:
   list-channel-allow <chId>           Show per-channel allowFrom list
 
   DM Access Control:
-  set-dm-policy <open|allowlist|owner|pairing> Set DM policy
+  set-dm-policy <open|allowlist|owner|pairing|disabled> Set DM policy
   list-dm-allow                       Show DM policy and allowFrom list
   add-dm-allow <aad_object_id>        Add user to dmAllowFrom
   remove-dm-allow <aad_object_id>     Remove user from dmAllowFrom
@@ -626,11 +627,11 @@ Commands:
   auth-revoke <aad_object_id>         Revoke delegated auth for a user
 
 Permission flow:
-  Private DM:  dmPolicy (open|allowlist|owner) + dmAllowFrom
+  Private DM:  dmPolicy (open|allowlist|owner|pairing|disabled) + dmAllowFrom
   Group chat:  groupPolicy (disabled|allowlist|open) -> per-group allowFrom
   Channel:     groupPolicy (disabled|allowlist|open) -> per-channel allowFrom
-  Owner always bypasses access control checks
-  (except groupPolicy:disabled — blocks all group messages including from owner).
+  Owner bypasses access control checks except disabled policies.
+  (groupPolicy:disabled blocks all group messages; dmPolicy:disabled blocks all DMs).
 
 After changes, restart: pm2 restart zylos-ms-teams
 `);

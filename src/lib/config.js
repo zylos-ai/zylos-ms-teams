@@ -18,12 +18,14 @@ export const DEFAULT_CONFIG = {
   dmPolicy: 'owner',
   dmAllowFrom: [],
   dmWelcomeMessage: '',
+  dmDisabledMessage: "Sorry, I'm not available for private messages.",
   dmPairingPendingMessage: 'Your DM access request has been sent for approval.',
   dmPairingDeniedMessage: 'Sorry, your DM access request was denied.',
   promptStarters: ['What can you do?', 'Help me draft a message', 'Summarize a document'],
   welcomeCardTitle: null,
   cloud: 'public',
   debounceMs: 0,
+  replyStyle: 'thread',
   voiceTranscription: 'auto',
   whisperModel: '',
   groupPolicy: 'allowlist',
@@ -66,6 +68,7 @@ export function mergeConfigWithDefaults(parsed = {}) {
     welcomeCardTitle: parsed.welcomeCardTitle ?? DEFAULT_CONFIG.welcomeCardTitle,
     cloud: parsed.cloud || process.env.MSTEAMS_CLOUD || DEFAULT_CONFIG.cloud,
     debounceMs: Number.isFinite(Number(parsed.debounceMs)) ? Math.max(0, Number(parsed.debounceMs)) : DEFAULT_CONFIG.debounceMs,
+    replyStyle: parsed.replyStyle === 'new' ? 'new' : DEFAULT_CONFIG.replyStyle,
     message: {
       ...DEFAULT_CONFIG.message,
       ...(parsed.message || {})
@@ -87,39 +90,35 @@ export function mergeConfigWithDefaults(parsed = {}) {
 export function resolveRouteConfig(convType, conversationId, config) {
   const result = {
     requireMention: true,
-    replyStyle: 'top-level',
+    replyStyle: config.replyStyle === 'new' ? 'new' : 'thread',
     allowFrom: [],
+  };
+
+  const applyOverrides = (entry) => {
+    if (!entry) return;
+    if (entry.mode === 'smart') result.requireMention = false;
+    else if (entry.mode === 'mention') result.requireMention = true;
+    if (entry.replyStyle === 'thread' || entry.replyStyle === 'new') result.replyStyle = entry.replyStyle;
+    if (Array.isArray(entry.allowFrom) && entry.allowFrom.length > 0) {
+      result.allowFrom = entry.allowFrom;
+    }
   };
 
   if (convType === 'channel') {
     const channels = config.channels || {};
     const chCfg = selectConfiguredEntry(channels, conversationId);
-    if (!chCfg) return result;
-
-    if (chCfg.mode === 'smart') result.requireMention = false;
-    if (chCfg.replyStyle) result.replyStyle = chCfg.replyStyle;
-    if (Array.isArray(chCfg.allowFrom) && chCfg.allowFrom.length > 0) {
-      result.allowFrom = chCfg.allowFrom;
-    }
+    applyOverrides(chCfg);
 
     // Post-level overrides (future)
     const threadMatch = conversationId.match(/;messageid=(\d+)/);
-    if (threadMatch) {
+    if (threadMatch && chCfg) {
       const postCfg = (chCfg.posts || {})[threadMatch[1]];
-      if (postCfg) {
-        if (postCfg.mode === 'smart') result.requireMention = false;
-        else if (postCfg.mode === 'mention') result.requireMention = true;
-        if (Array.isArray(postCfg.allowFrom) && postCfg.allowFrom.length > 0) {
-          result.allowFrom = postCfg.allowFrom;
-        }
-      }
+      applyOverrides(postCfg);
     }
   } else {
     const groups = config.groups || {};
     const grpCfg = selectConfiguredEntry(groups, conversationId);
-    if (grpCfg && Array.isArray(grpCfg.allowFrom) && grpCfg.allowFrom.length > 0) {
-      result.allowFrom = grpCfg.allowFrom;
-    }
+    applyOverrides(grpCfg);
   }
 
   return result;
