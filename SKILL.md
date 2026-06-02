@@ -5,10 +5,10 @@ description: >-
   Microsoft Teams communication channel.
   Use when: (1) replying to Teams messages (DM or group/channel @mentions),
   (2) sending proactive messages to Teams users or groups,
-  (3) managing DM access control (dmPolicy: open/allowlist/owner, dmAllowFrom list),
-  (4) managing group access control (groupPolicy, per-group allowFrom),
-  (5) configuring the bot (admin CLI, credentials),
-  (6) troubleshooting Teams bot or service issues.
+  (3) managing DM access control (dmPolicy: open/allowlist/owner/pairing/disabled, dmAllowFrom list),
+  (4) managing group/channel access control (groupPolicy, per-conversation allowFrom),
+  (5) configuring the bot (admin CLI, credentials, sovereign cloud, reply style),
+  (6) troubleshooting Teams bot or service issues with doctor diagnostics.
   Config at ~/zylos/components/ms-teams/config.json. Service: pm2 zylos-ms-teams.
 type: communication
 
@@ -28,6 +28,10 @@ lifecycle:
     - config.json
     - conversations.json
     - delegated-tokens.json
+    - dm-pairing.json
+    - allowlist-resolution.json
+    - conversation-activity.json
+    - seen-dm-users.json
     - reaction-cache.json
     - channel-subscriptions.json
     - data/
@@ -49,6 +53,10 @@ config:
       description: "Azure AD Tenant ID (for single-tenant bots)"
     - name: MSTEAMS_PUBLIC_URL
       description: "Canonical public HTTPS URL including base path (e.g. https://bot.example.com/ms-teams). Used for OAuth redirects and Graph subscriptions. Falls back to x-forwarded-* headers if not set."
+    - name: MSTEAMS_CLOUD
+      description: "Microsoft cloud environment for token and Graph endpoints (public, gcc, gccHigh, dod, china)."
+    - name: MSTEAMS_APP_CATALOG_ID
+      description: "Teams app catalog ID used for deterministic DM reaction mapping. Config value teamsAppCatalogId takes precedence."
 
 next-steps: "BEFORE starting the service: 1) Run 'zylos configure ms-teams' to set credentials (stored in config.json; legacy .env values are also read as fallback). 2) Optionally set MSTEAMS_TENANT_ID for single-tenant bots and MSTEAMS_PUBLIC_URL for OAuth/subscriptions. 3) Configure the messaging endpoint in Azure Bot Registration to point to https://{domain}/ms-teams/api/messages. 4) Start the service (pm2 restart zylos-ms-teams)."
 
@@ -79,6 +87,8 @@ dependencies:
 Microsoft Teams communication channel for zylos.
 
 Depends on: comm-bridge (C4 message routing). Optional: voice-asr (auto-detected via ~/zylos/bin/transcribe; disabled gracefully when absent).
+
+Supports DMs, group chats, Teams channels, smart mode, voice transcription, delegated-auth reactions, DM pairing approval, welcome cards, inbound debounce, sovereign cloud endpoints, and diagnostics.
 
 ## Sending Messages
 
@@ -131,10 +141,15 @@ $ADM show-owner                                  # Show current owner
 $ADM help                                        # Show all commands
 
 # DM Access Control
-$ADM set-dm-policy <open|allowlist|owner>         # Set DM policy
+$ADM set-dm-policy <open|allowlist|owner|pairing|disabled> # Set DM policy
 $ADM list-dm-allow                                # Show DM policy + allowFrom list
 $ADM add-dm-allow <aad_object_id>                 # Add user to dmAllowFrom
 $ADM remove-dm-allow <aad_object_id>              # Remove user from dmAllowFrom
+$ADM dm-pending                                   # List pending DM pairing requests
+$ADM dm-approve <aad_object_id>                   # Approve pending DM access
+$ADM dm-deny <aad_object_id> [reason]             # Deny pending DM access
+$ADM set-dm-welcome <message>                     # Set first-contact DM welcome message
+$ADM show-dm-welcome                              # Show first-contact DM welcome message
 
 # Group Chat Management
 $ADM list-groups                                  # List all configured group chats
@@ -156,6 +171,7 @@ $ADM remove-channel-allow <chId> <aad_id>         # Remove user from per-channel
 $ADM list-channel-allow <chId>                    # Show per-channel allowFrom list
 
 # Diagnostics
+$ADM doctor                                       # Run configuration and connectivity diagnostics
 $ADM graph-status                                 # Show Graph API configuration state
 
 # Delegated Auth (reactions)
@@ -172,6 +188,10 @@ After changes, restart: `pm2 restart zylos-ms-teams`
 - Logs: `~/zylos/components/ms-teams/logs/`
 - Conversations: `~/zylos/components/ms-teams/conversations.json`
 - Delegated tokens: `~/zylos/components/ms-teams/delegated-tokens.json`
+- DM pairing state: `~/zylos/components/ms-teams/dm-pairing.json`
+- Allowlist resolution cache: `~/zylos/components/ms-teams/allowlist-resolution.json`
+- Conversation activity cache: `~/zylos/components/ms-teams/conversation-activity.json`
+- Seen DM users: `~/zylos/components/ms-teams/seen-dm-users.json`
 - Reaction cache: `~/zylos/components/ms-teams/reaction-cache.json`
 - Channel subscriptions: `~/zylos/components/ms-teams/channel-subscriptions.json`
 
@@ -186,15 +206,27 @@ Credentials are stored in component `config.json` (under `credentials` and `publ
     "appPassword": "your_app_password",
     "tenantId": "your_tenant_id"
   },
-  "publicUrl": "https://bot.example.com/ms-teams"
+  "publicUrl": "https://bot.example.com/ms-teams",
+  "cloud": "public",
+  "replyStyle": "thread",
+  "dmPolicy": "owner",
+  "groupPolicy": "allowlist",
+  "debounceMs": 0,
+  "teamsAppCatalogId": "",
+  "voiceTranscription": "auto"
 }
 ```
 
 - `appId` and `appPassword` — Azure Bot Registration (required)
 - `tenantId` — Azure AD tenant (optional, for single-tenant bots and Graph API)
 - `publicUrl` — Canonical HTTPS URL including base path (optional, for OAuth redirects and Graph subscriptions; falls back to `x-forwarded-*` headers)
+- `cloud` — Microsoft cloud endpoint set (`public`, `gcc`, `gccHigh`, `dod`, `china`)
+- `replyStyle` — `thread` replies to the triggering activity where supported; `new` sends new top-level messages
+- `debounceMs` — merges rapid inbound messages for the same conversation before dispatching to C4
+- `teamsAppCatalogId` — Enables deterministic DM reaction mapping with delegated auth
+- `voiceTranscription` / `whisperModel` — Controls optional voice transcription
 
-> **Legacy fallback:** values from `~/zylos/.env` (`MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID`, `MSTEAMS_PUBLIC_URL`) are still read if not present in config.json.
+> **Legacy fallback:** values from `~/zylos/.env` (`MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID`, `MSTEAMS_PUBLIC_URL`, `MSTEAMS_CLOUD`, `MSTEAMS_APP_CATALOG_ID`) are still read if not present in config.json.
 
 ## Owner
 
@@ -212,13 +244,15 @@ DM and group access are controlled by **independent** top-level policies.
 2. `dmPolicy` = `open`? -> anyone can DM
 3. `dmPolicy` = `owner`? -> only owner can DM
 4. `dmPolicy` = `allowlist`? -> check `dmAllowFrom` list
+5. `dmPolicy` = `pairing`? -> unknown users request owner approval
+6. `dmPolicy` = `disabled`? -> reject all DMs with `dmDisabledMessage`
 
 **Group/channel message (groupPolicy):**
 1. `groupPolicy` = `disabled`? -> all group messages dropped
 2. `groupPolicy` = `open`? -> respond to @mentions from any group
 3. `groupPolicy` = `allowlist`? -> only configured groups; owner always passes
 
-Per-group/channel options: `mode` (mention/smart), `allowFrom` (restrict senders), `historyLimit`.
+Per-group/channel options: `mode` (mention/smart), `allowFrom` (restrict senders), `replyStyle`, `historyLimit`, and channel `posts` overrides.
 
 ## Smart Mode
 
@@ -228,6 +262,8 @@ Groups and channels can operate in two modes:
 - **smart**: Bot receives all messages; agent decides whether to respond
 
 Channels in smart mode use Microsoft Graph API subscriptions (auto-renewed every 10 min) to receive messages without @mention.
+
+Inbound messages can be debounced with `debounceMs` before dispatch to C4. If configured, a first-contact DM welcome message is sent once per user. Welcome cards use `promptStarters` and `welcomeCardTitle`.
 
 ## Group Context
 
@@ -246,3 +282,5 @@ pm2 restart zylos-ms-teams
 ```
 
 Run `node ~/zylos/.claude/skills/ms-teams/src/admin.js help` for all commands.
+
+Run `node ~/zylos/.claude/skills/ms-teams/src/admin.js doctor` for credential, Graph, delegated auth, and cloud endpoint diagnostics.

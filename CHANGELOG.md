@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PR #6: Startup credential probe for Bot Framework credentials.
+- PR #6: Welcome card prompt starters and first-contact DM welcome messaging.
+- PR #6: Reply-to-bot tracking, thread parent context caching, and unsupported-content replies.
+- PR #6: Timezone tags from Teams client metadata.
+- PR #7: `doctor` diagnostics for credentials, Graph, delegated auth, and cloud endpoint checks.
+- PR #7: Inbound debounce support through `debounceMs`.
+- PR #7: Sovereign cloud endpoint support through `cloud` / `MSTEAMS_CLOUD`.
+- PR #8: DM pairing mode with pending, approve, deny, and owner notification flow.
+- PR #8: Reply-chain history and error classification for user-visible delivery failures.
+- PR #8: Mutable allowlist warnings based on recent conversation activity.
+- PR #9: Graph token scope audit at startup and in `doctor`.
+- PR #9: Delegated-auth probe at startup and in `doctor`.
+- PR #9: Glob/wildcard, display-name, and `group:<name>` allowlist matching with cached Graph resolution.
+- PR #9: Scheduled allowlist-resolution refresh with configurable interval.
+- PR #10: Configurable reply style with `replyStyle: "thread" | "new"`.
+- PR #10: Cross-cloud mismatch detection at startup and in `doctor`.
+- PR #10: `dmPolicy: "disabled"` with configurable `dmDisabledMessage`.
+
+### Changed
+- PR #6: C4 failure handling now sends clearer unsupported-content and unavailable-agent replies where appropriate.
+- PR #7: `/internal/send` can return Teams activity IDs for follow-up reactions and thread handling.
+- PR #8: Access control and route configuration are split into dedicated helper modules for testability.
+- PR #8: Group/channel history handling includes reply-chain context for threaded conversations.
+- PR #9: Allowlist access checks can use resolved identities in addition to raw AAD object IDs.
+- PR #10: Channel/group route config can override reply style while global config remains the fallback.
+- Documentation now reflects the post-PR #10 runtime modules, config fields, admin commands, and upgrade-preserved data files.
+
 ## [0.1.7] - 2026-06-02
 
 ### Fixed
