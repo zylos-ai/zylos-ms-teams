@@ -34,7 +34,10 @@ import { registerRoutes } from './routes.js';
 import { sendToC4 } from './lib/c4.js';
 import { replyIfUnsupportedInboundContent } from './lib/inbound-content.js';
 import { extractCardText } from './lib/card-extractor.js';
-import { loadSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
+import { loadSeenDmUsers, saveSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
+import { buildWelcomeCardAttachment } from './lib/welcome-card.js';
+import { isSentMessage } from './lib/sent-message-cache.js';
+import { getCachedThreadParent, markThreadParentInjected, shouldInjectThreadParent } from './lib/thread-parent-cache.js';
 import { getTranscriptionProvider, transcribeAudio } from './lib/transcribe.js';
 import { activityDedupKey, editedMessageText, deletedMessageText, extractCardActionPayload, cardActionMessage } from './lib/activity-events.js';
 
@@ -98,12 +101,31 @@ console.log(`[ms-teams] Voice ASR: ${VOICE_ENABLED ? `enabled (${transcriptionPr
 
 const seenDmUsers = loadSeenDmUsers();
 
+function markDmUserSeen(aadObjectId) {
+  const userId = String(aadObjectId || '').trim();
+  if (!userId || seenDmUsers.has(userId)) return false;
+  seenDmUsers.add(userId);
+  saveSeenDmUsers(seenDmUsers);
+  return true;
+}
+
 // Credentials check
 const credentials = getCredentials();
 if (!credentials.appId || !credentials.appPassword) {
   console.error('[ms-teams] WARNING: credentials not configured (appId and/or appPassword missing)');
   console.error('[ms-teams] The bot will start but cannot authenticate with Teams.');
   console.error('[ms-teams] Run "zylos configure ms-teams" or set credentials in config.json, then restart.');
+}
+
+async function probeBotCredentials() {
+  if (!credentials.appId || !credentials.appPassword) return;
+  try {
+    await acquireTokenForScope('https://api.botframework.com/.default');
+    console.log('[ms-teams] Bot credentials probe: ok');
+  } catch (err) {
+    console.error('[ms-teams] ❌ Bot credentials invalid — check appId/appPassword/tenantId');
+    console.error(`[ms-teams] Credential probe error: ${err.message}`);
+  }
 }
 
 // Bot identity
@@ -233,6 +255,36 @@ function appendCardText(text, activity) {
   return [text, cardText].filter(part => String(part || '').trim()).join('\n\n');
 }
 
+function appendTimezoneTag(message, activity) {
+  const timezone = String(activity?.localTimezone || activity?.channelData?.clientInfo?.timezone || '').trim();
+  if (!timezone) return message;
+  return `${message} [tz: ${escapeXml(timezone)}]`;
+}
+
+function messageReferencesSentBotMessage(activity, conversationId) {
+  return Boolean(activity?.replyToId && isSentMessage(conversationId, activity.replyToId));
+}
+
+async function fetchThreadParentContext(teamId, channelId, rootMessageId, conversationId) {
+  if (!teamId || !channelId || !rootMessageId) return null;
+  if (!shouldInjectThreadParent(conversationId, rootMessageId)) return null;
+
+  try {
+    const parentMsg = await getCachedThreadParent(teamId, channelId, rootMessageId, fetchMessage);
+    const parentName = parentMsg?.from?.user?.displayName || parentMsg?.from?.application?.displayName || 'unknown';
+    const parentText = parentMsg?.body?.contentType === 'text'
+      ? parentMsg?.body?.content || ''
+      : htmlToMarkdown(parentMsg?.body?.content || '');
+    if (parentText.trim()) {
+      markThreadParentInjected(conversationId, rootMessageId);
+      return { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
+    }
+  } catch (err) {
+    console.debug(`[ms-teams] Thread parent fetch failed: ${err.message}`);
+  }
+  return null;
+}
+
 async function saveConvRef(activity, ref) {
   const conversationId = activity.conversation?.id;
   if (!conversationId) return;
@@ -360,7 +412,7 @@ async function handleMessage(ctx) {
     }
 
     const mediaFiles = await downloadMedia();
-    if (await replyIfUnsupportedInboundContent(ctx, text, mediaFiles)) return;
+    if (await replyIfUnsupportedInboundContent(ctx, text, mediaFiles, { attachments: activity.attachments || [] })) return;
 
     const audioFile = mediaFiles.find(m => {
       const ct = (m.contentType || '').toLowerCase();
@@ -370,7 +422,7 @@ async function handleMessage(ctx) {
       try {
         const transcript = await transcribeAudio(audioFile.path, { mode: config.voiceTranscription, modelPath: config.whisperModel || process.env.WHISPER_MODEL });
         console.log(`[ms-teams] Voice transcribed: "${transcript.substring(0, 60)}"`);
-        const msg = formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply });
+        const msg = appendTimezoneTag(formatMessage('dm', senderName, `[Voice] ${transcript}`, { quotedReply }), activity);
         startTyping(conversationId);
         sendToC4('ms-teams', endpoint, msg, {
           onReject: (errMsg) => rejectReply(errMsg),
@@ -383,7 +435,7 @@ async function handleMessage(ctx) {
       }
     }
 
-    let msg = formatMessage('dm', senderName, text, { quotedReply });
+    let msg = appendTimezoneTag(formatMessage('dm', senderName, text, { quotedReply }), activity);
     for (const media of mediaFiles) msg += ` ---- file: ${escapeXml(media.path)}`;
     startTyping(conversationId);
     sendToC4('ms-teams', endpoint, msg, {
@@ -398,9 +450,10 @@ async function handleMessage(ctx) {
     const senderIsOwner = access.isOwner(senderAadObjectId);
     const groupPolicy = config.groupPolicy || 'allowlist';
     const mentioned = mentions.isBotMentioned(activity);
+    const replyToBot = messageReferencesSentBotMessage(activity, conversationId);
     const routeConfig = resolveRouteConfig(convType, conversationId, config);
     const smart = isSmartConversation(config, convType, conversationId);
-    const smartNoMention = smart && !mentioned;
+    const smartNoMention = smart && !mentioned && !replyToBot;
 
     if (groupPolicy === 'disabled') {
       logRejection('groupPolicy=disabled');
@@ -429,7 +482,7 @@ async function handleMessage(ctx) {
 
     const requireMention = routeConfig.requireMention;
 
-    if (requireMention && !mentioned && !senderIsOwner && !smart) {
+    if (requireMention && !mentioned && !replyToBot && !senderIsOwner && !smart) {
       return;
     }
 
@@ -472,21 +525,8 @@ async function handleMessage(ctx) {
     if (!quotedReply && convType === 'channel' && isGraphEnabled()) {
       const threadRootId = activity.replyToId || conversationId.match(/;messageid=(\d+)/)?.[1];
       if (threadRootId) {
-        try {
-          const { teamId, channelId } = extractChannelIds(activity.channelData);
-          if (teamId && channelId) {
-            const parentMsg = await fetchMessage(teamId, channelId, threadRootId);
-            const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
-            const parentText = parentMsg.body?.contentType === 'text'
-              ? parentMsg.body?.content || ''
-              : htmlToMarkdown(parentMsg.body?.content || '');
-            if (parentText.trim()) {
-              quotedReply = { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
-            }
-          }
-        } catch (err) {
-          console.debug(`[ms-teams] Thread parent fetch failed: ${err.message}`);
-        }
+        const { teamId, channelId } = extractChannelIds(activity.channelData);
+        quotedReply = await fetchThreadParentContext(teamId, channelId, threadRootId, conversationId);
       }
     }
 
@@ -549,7 +589,7 @@ async function handleMessage(ctx) {
     })();
     const shouldDownload = !smartNoMention || hasVoiceAttachment;
     const mediaFiles = shouldDownload ? await downloadMedia() : [];
-    if (await replyIfUnsupportedInboundContent(ctx, cleanText, mediaFiles, { addressed: !smartNoMention })) return;
+    if (await replyIfUnsupportedInboundContent(ctx, cleanText, mediaFiles, { addressed: !smartNoMention, attachments: activity.attachments || [] })) return;
     const hasAttachments = nonHtmlAtts.length > 0;
 
     if (hasVoiceAttachment && VOICE_ENABLED) {
@@ -569,9 +609,9 @@ async function handleMessage(ctx) {
       }
     }
 
-    let msg = formatMessage(convType, senderName, cleanText, {
+    let msg = appendTimezoneTag(formatMessage(convType, senderName, cleanText, {
       groupName, quotedReply, contextBlock, smartHint: smartNoMention && !hasVoiceAttachment,
-    });
+    }), activity);
     if (smartNoMention && !hasVoiceAttachment) {
       if (hasAttachments) {
         const attNames = nonHtmlAtts.map(a => a.name || a.contentType || 'file').join(', ');
@@ -684,18 +724,7 @@ async function handleChannelNotification(notification) {
 
   let quotedReply = null;
   if (rootMessageId) {
-    try {
-      const parentMsg = await fetchMessage(teamId, channelId, rootMessageId);
-      const parentName = parentMsg.from?.user?.displayName || parentMsg.from?.application?.displayName || 'unknown';
-      const parentText = parentMsg.body?.contentType === 'text'
-        ? parentMsg.body?.content || ''
-        : htmlToMarkdown(parentMsg.body?.content || '');
-      if (parentText.trim()) {
-        quotedReply = { quotedFrom: parentName, quotedText: parentText.substring(0, 500) };
-      }
-    } catch (err) {
-      console.debug(`[ms-teams/subs] Thread parent fetch failed: ${err.message}`);
-    }
+    quotedReply = await fetchThreadParentContext(teamId, channelId, rootMessageId, threadConversationId);
   }
 
   const contextLimit = config.channels?.[conversationId]?.historyLimit
@@ -704,12 +733,12 @@ async function handleChannelNotification(notification) {
   const contextMessages = getInMemoryContext(threadConversationId, messageId, contextLimit);
   const contextBlock = formatContextBlock(contextMessages);
 
-  let msg = formatMessage('channel', senderName, text, {
+  let msg = appendTimezoneTag(formatMessage('channel', senderName, text, {
     groupName: channelName,
     quotedReply,
     contextBlock,
     smartHint: true,
-  });
+  }), graphMsg);
 
   const endpoint = buildEndpoint(threadConversationId, {
     type: 'channel',
@@ -927,6 +956,21 @@ teamsApp.on('conversationUpdate', async (ctx) => {
             }
           }
         }
+      } else if (convType === 'dm') {
+        const aadObjectId = activity.from?.aadObjectId || activity.from?.id || '';
+        try {
+          await ctx.send({
+            type: 'message',
+            attachments: [buildWelcomeCardAttachment(config, botName)],
+          });
+          markDmUserSeen(aadObjectId);
+        } catch (err) {
+          console.warn(`[ms-teams] Failed to send welcome card: ${err.message}`);
+          try {
+            await ctx.send(config.dmWelcomeMessage || `I'm ready to help here.`);
+            markDmUserSeen(aadObjectId);
+          } catch {}
+        }
       }
     }
   } catch (err) {
@@ -1053,6 +1097,7 @@ async function initChannelSubscriptions() {
 }
 
 (async () => {
+  void probeBotCredentials();
   await startServerWithRetry(PORT);
   httpServer.on('error', (err) => {
     console.error(`[ms-teams] Server error: ${err.message}`);
