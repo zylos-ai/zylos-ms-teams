@@ -279,7 +279,7 @@ Each tier includes auth fallback: unauthenticated → Bot Framework token → Gr
 |------------|---------|
 | No direct file upload in bot DMs | Teams does not allow drag-and-drop file upload in bot DMs. Files arrive via OneDrive sharing or file cards. |
 | Webhook timeouts | Teams expects a quick HTTP response. Slow processing may cause retries or dropped replies. zylos-ms-teams handles this by responding immediately and sending replies proactively. |
-| No reaction support | The `@microsoft/teams.apps` v2 SDK does not expose reaction events. |
+| Reactions require delegated auth | Reactions use Graph API with delegated permissions (`Chat.ReadWrite`, `ChannelMessage.Send`). A user must complete the OAuth sign-in flow once at `/auth/sign-in`. |
 | Formatting limits | Teams markdown is more limited than Slack or Discord. Tables and nested lists may not render correctly. |
 
 ## Troubleshooting
