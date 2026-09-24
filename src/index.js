@@ -669,6 +669,11 @@ async function handleMessage(ctx) {
     const routeConfig = resolveRouteConfig(convType, conversationId, config);
     const smart = isSmartConversation(config, convType, conversationId);
     const smartNoMention = smart && !mentioned && !replyToBot;
+    // Whether this message is actually directed at the bot. Used to gate the typing
+    // indicator: an un-addressed message may legitimately get no reply, and the only
+    // runtime stopTyping() trigger is an outbound send, so starting the indicator here
+    // would leave it spinning forever.
+    const addressedToBot = mentioned || replyToBot;
 
     if (groupPolicy === 'disabled') {
       logRejection('groupPolicy=disabled');
@@ -868,7 +873,7 @@ async function handleMessage(ctx) {
       if (media.contentType?.startsWith('audio/') || media.contentType?.startsWith('video/')) continue;
       msg += ` ---- file: ${escapeXml(media.path)}`;
     }
-    if (!smartNoMention && convType !== 'channel') startTyping(conversationId);
+    if (addressedToBot && convType !== 'channel') startTyping(conversationId);
     dispatchToC4(endpoint, msg, {
       onReject: (errMsg) => rejectReply(errMsg),
       onFail: failReply,
