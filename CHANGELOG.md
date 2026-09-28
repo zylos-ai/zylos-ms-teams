@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-09-28
+
+### Fixed
+- PR #18: Typing indicator no longer spins forever on group messages that are not addressed to the bot. It was started for every accepted group message, but the only runtime `stopTyping()` trigger is an outbound send, so a message the agent chose not to answer left Teams showing "typing..." indefinitely. Reachable in mention mode, where the owner bypasses the mention filter. `startTyping()` is now gated on the message actually being addressed to the bot (mentioned or a reply to the bot); delivery behaviour and the owner bypass are unchanged.
+
+### Known limitations
+- DMs still start the indicator on every message; there is no notion of being "addressed" in a DM.
+- A mentioned message the agent chooses not to answer can still leave the indicator running.
+
 ## [0.1.8] - 2026-06-02
 
 ### Added
