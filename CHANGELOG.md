@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+### Added
+- Session groups for multi-session zylos-core: `dm-` / `group-` / `channel-`
+  + the Teams conversation id (each channel post separately), `admin` for DM
+  pairing notices. Ids are escaped reversibly; names over 95 characters use a
+  short id stored in `session-groups.json`. `--session-group` is passed only
+  when Core lists it in `c4-receive-options.json`.
+- `scripts/session-group.js <endpoint>` prints the group (exit 1, no output,
+  for unknown or invalid endpoints).
+- Outbound destination policy in `send.js`: DMs only to recipients the
+  inbound DM policy accepts; group chats/channels only when allowed inbound,
+  else only replies to logged owner messages. Blocked sends exit 1.
+
+### Changed
+- c4-receive rejections follow `error.persisted`; Core's error text is no
+  longer shown to Teams users. The 35s c4-receive kill timeout is removed.
+
 ## [0.1.9] - 2026-09-28
 
 ### Fixed

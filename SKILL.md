@@ -104,6 +104,44 @@ Direct send (bypasses C4 logging, for testing only):
 node ~/zylos/.claude/skills/ms-teams/scripts/send.js "<endpoint>" "Hello!"
 ```
 
+## Session Groups (multi-session Core)
+
+With a zylos-core that supports multi-session, each inbound message carries a
+session group, so every Teams conversation gets its own conversation thread.
+Replies still go through the same `reply via` path.
+
+| Conversation | Session group | Example |
+|---|---|---|
+| Personal chat | `dm-<conversation id>` | `dm-_3` (long ids use a stored short id) |
+| Group chat | `group-<conversation id>` | `group-19:3b1c...5e_athread.v2` |
+| Channel post (reply chain) | `channel-<conversation id>` (includes `;messageid=`) | `channel-19:9f8e..._athread.tacv2_smessageid_e1731234567890` |
+| DM pairing notices | `admin` | `admin` |
+
+- Ids are escaped reversibly for Core (`_`→`__`, `@`→`_a`, `;`→`_s`, `=`→`_e`,
+  `/`→`_f`, `+`→`_p`, `,`→`_c`, other bytes `_xHH`). A name over 95 characters
+  gets a short id (`<prefix>-_<n>`) assigned once by the receiver and kept in
+  `session-groups.json`; never truncated or hashed.
+- Each channel post is its own group. To group a whole channel instead, change
+  only `conversationKey` in `src/lib/session-group.js` (plan with Core: names
+  are fixed once live).
+- The group is passed only if the installed Core lists `--session-group` in
+  `c4-receive-options.json`; older Cores behave exactly as before.
+
+```bash
+node ~/zylos/.claude/skills/ms-teams/scripts/session-group.js "<endpoint>"
+```
+
+## Outbound Policy
+
+`send.js` checks the destination before sending:
+- **DM:** the recipient stored with the conversation must pass the inbound DM
+  policy (owner first; `dmPolicy: disabled` blocks all).
+- **Group chat / channel:** allowed when inbound access allows the
+  conversation. Otherwise only a reply to an accepted message the owner sent
+  there (proven by the component's inbound log). `groupPolicy: disabled`
+  blocks all, as inbound does.
+- Blocked sends exit 1 with `outbound blocked`; nothing is sent.
+
 ## Media Messages
 
 ```bash

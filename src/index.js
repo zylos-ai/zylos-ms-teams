@@ -31,7 +31,7 @@ import { writeJsonAtomic } from './lib/atomic-write.js';
 import { createAccessControl, createMentionHelpers, stripThreadId } from './lib/access.js';
 import { recordHistoryEntry, getInMemoryContext, formatContextBlock, ensureReplay } from './lib/history.js';
 import { registerRoutes } from './routes.js';
-import { sendToC4 } from './lib/c4.js';
+import { sendToC4, UNCERTAIN_REPLY } from './lib/c4.js';
 import { replyIfUnsupportedInboundContent } from './lib/inbound-content.js';
 import { extractCardText } from './lib/card-extractor.js';
 import { loadSeenDmUsers, saveSeenDmUsers, sendDmWelcomeIfFirstSeen } from './lib/dm-welcome.js';
@@ -542,14 +542,17 @@ async function handleMessage(ctx) {
     activityId
   });
 
-  const rejectReply = async (errMsg) => {
+  // notice is user-facing text from sendToC4, or null when Core already
+  // stored the message (send nothing).
+  const rejectReply = async (notice) => {
+    if (!notice) return;
     try {
-      await ctx.send(errMsg);
+      await ctx.send(notice);
     } catch (err) {
       console.error(`[ms-teams] Failed to send reject reply: ${err.message}`);
     }
   };
-  const failReply = () => ctx.send('Sorry, I could not process your message right now. Please try again.').catch(() => {});
+  const failReply = () => ctx.send(UNCERTAIN_REPLY).catch(() => {});
 
   if (convType === 'dm') {
     recordConversationActivity({

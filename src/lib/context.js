@@ -3,13 +3,13 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 
-const LOGS_DIR = path.join(DATA_DIR, 'logs');
+export const LOGS_DIR = path.join(DATA_DIR, 'logs');
 const BYTES_PER_ENTRY = 512;
 const _replayedKeys = new Set();
 
 fs.mkdirSync(LOGS_DIR, { recursive: true });
 
-function chatIdToLogFile(chatId) {
+export function chatIdToLogFile(chatId) {
   return String(chatId).split(';')[0].replace(/[/:@]/g, '_') + '.jsonl';
 }
 

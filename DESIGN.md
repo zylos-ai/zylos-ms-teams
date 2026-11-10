@@ -256,6 +256,21 @@ Internal localhost-only routes protected by an internal token:
 - `/internal/send-media` - Media delivery
 - `/internal/react` - Reaction set/remove
 
+### Session Groups and Outbound Policy
+
+`src/lib/c4.js` passes `--session-group` (from `src/lib/session-group.js`)
+only when Core advertises it in `c4-receive-options.json`; rejections are
+classified by `error.persisted`, Core text stays in logs, and there is no
+component-side kill timeout. Groups are one per Teams conversation (channel
+posts separately); ids are escaped reversibly and long names use a short id
+stored in `session-groups.json`.
+
+`scripts/send.js` applies `src/lib/outbound-policy.js` before any send: DM
+recipients come from the stored conversation reference, not the endpoint;
+non-allowed group/channel sends are allowed only as replies to an owner message
+found in the component's inbound log (`logs/<chat>.jsonl`, written only after
+access checks pass). Missing proof denies.
+
 ## 5. Security
 
 - **Bot Framework JWT validation**: Inbound `/api/messages` requests are verified against Microsoft OpenID metadata for the configured cloud and app ID.

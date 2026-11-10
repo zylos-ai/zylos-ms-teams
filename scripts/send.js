@@ -18,6 +18,8 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 import { getConfig, DATA_DIR, resolveRouteConfig } from '../src/lib/config.js';
 import { splitMarkdownMessage } from '../src/lib/markdown-split.js';
 import { parseCardMarker } from '../src/lib/card-send.js';
+import { getConversationReference } from '../src/lib/conversation-store.js';
+import { outboundDenialReason, findLoggedMessage } from '../src/lib/outbound-policy.js';
 
 const MAX_LENGTH = 4000;
 
@@ -244,8 +246,20 @@ async function removeThinkingReaction() {
   } catch {}
 }
 
+async function assertOutboundAllowed() {
+  const ref = (parsedEndpoint.type || 'dm') === 'dm'
+    ? await getConversationReference(parsedEndpoint.conversationId)
+    : null;
+  const reason = outboundDenialReason(config, parsedEndpoint, {
+    getRecipient: () => (ref?.user ? { aadObjectId: ref.user.aadObjectId, name: ref.user.name } : null),
+    findMessage: (conversationId, messageId) => findLoggedMessage(conversationId, messageId),
+  });
+  if (reason) throw new Error(`outbound blocked: ${reason}`);
+}
+
 async function send() {
   try {
+    await assertOutboundAllowed();
     const media = parseMediaPrefix(message);
     if (media) {
       await sendMedia(media.mediaType, media.filePath);

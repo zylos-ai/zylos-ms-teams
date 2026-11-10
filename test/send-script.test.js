@@ -59,8 +59,13 @@ describe('scripts/send.js', () => {
     fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({
       enabled: true,
       port,
+      owner: { bound: true, aadObjectId: 'aad-owner', name: 'Owner' },
       groups: {},
       channels: {},
+    }));
+    // The outbound DM check reads the recipient from the stored conversation.
+    fs.writeFileSync(path.join(dataDir, 'conversations.json'), JSON.stringify({
+      'conv-1': { user: { aadObjectId: 'aad-owner', name: 'Owner' }, savedAt: Date.now(), lastAccessed: Date.now() },
     }));
   });
 
