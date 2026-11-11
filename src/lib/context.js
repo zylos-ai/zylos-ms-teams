@@ -9,8 +9,19 @@ const _replayedKeys = new Set();
 
 fs.mkdirSync(LOGS_DIR, { recursive: true });
 
+/**
+ * History key for a conversation. Channel posts keep their `;messageid=<n>`
+ * suffix so each post (reply chain) has its own history, matching its own
+ * session group; other `;` parameters are dropped.
+ */
+export function historyKey(chatId) {
+  const [base, ...params] = String(chatId).split(';');
+  const post = params.find(p => /^messageid=\d+$/.test(p));
+  return post ? `${base};${post}` : base;
+}
+
 export function chatIdToLogFile(chatId) {
-  return String(chatId).split(';')[0].replace(/[/:@]/g, '_') + '.jsonl';
+  return historyKey(chatId).replace(/[/:@;=]/g, '_') + '.jsonl';
 }
 
 const _writeQueues = new Map();

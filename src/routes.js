@@ -138,7 +138,7 @@ export function registerRoutes(expressApp, deps) {
         recordSentMessage(baseConvId, result?.id || result?.activityId);
       }
 
-      recordHistoryEntry(baseConvId, {
+      recordHistoryEntry(conversationId, {
         timestamp: new Date().toISOString(),
         message_id: activityId || `bot:${Date.now()}`,
         user_id: 'bot',

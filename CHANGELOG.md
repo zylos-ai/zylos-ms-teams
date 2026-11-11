@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   else only replies to logged owner messages. Blocked sends exit 1.
 
 ### Changed
+- Channel posts keep their own history: the context block, the replay log
+  file and recorded bot replies are keyed by `<channel>;messageid=<post>`, so a
+  post no longer sees other posts' messages (matches the per-post session
+  group). Other conversations are unchanged.
 - c4-receive rejections follow `error.persisted`; Core's error text is no
   longer shown to Teams users. The 35s c4-receive kill timeout is removed.
 

@@ -124,7 +124,7 @@ describe('internal send route', () => {
     expect(response.status).toBe(200);
     expect(mocks.acquireTokenForScope).toHaveBeenCalledWith('botframework');
     expect(deps.teamsApp.send).not.toHaveBeenCalled();
-    expect(deps.recordHistoryEntry).toHaveBeenCalledWith('conv-1', expect.objectContaining({
+    expect(deps.recordHistoryEntry).toHaveBeenCalledWith('conv-1;messageid=parent-1', expect.objectContaining({
       message_id: 'activity-123',
       user_id: 'bot',
       user_name: 'Zylos',
