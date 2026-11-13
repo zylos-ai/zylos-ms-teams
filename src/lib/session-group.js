@@ -13,9 +13,18 @@
  * Core accepts [A-Za-z0-9_.:-], so the id is escaped reversibly: `_` -> `__`,
  * `@` `;` `=` `/` `+` `,` -> `_a` `_s` `_e` `_f` `_p` `_c`, any other byte ->
  * `_xHH`. When the name would exceed 95 characters, a short local id
- * `<prefix>-_<n>` is assigned once and kept in `session-groups.json`
- * (escaped names never contain `_<digit>`, so the two forms cannot collide).
+ * `<prefix>-_<n>` is assigned once and kept in `session-groups.json`. In an
+ * escaped name every `_` starts a two-character escape (`__`, `_a`, `_x`...),
+ * so at an escape boundary `_` is never followed by a digit; `<prefix>-_<n>`
+ * therefore cannot equal any escaped name.
  * Never truncated or hashed. Core prefixes the namespace; never add it here.
+ *
+ * Short ids must never be reused (Core and the scheduler keep them): a
+ * corrupt or structurally invalid store is an error (never treated as empty
+ * or overwritten), every write also writes a durable `.bak` copy, a missing
+ * store is restored from `.bak` when present, and new numbers start at
+ * max(stored next, highest stored id + 1, current time in ms), so even after
+ * the store is lost a new id cannot equal an earlier one.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,7 +77,11 @@ export function unescapeId(escaped) {
     const ch = escaped[i];
     if (ch !== '_') { flush(ch); continue; }
     const next = escaped[i + 1];
-    if (next === 'x') { bytes.push(parseInt(escaped.slice(i + 2, i + 4), 16)); i += 3; continue; }
+    if (next === 'x') {
+      const hex = escaped.slice(i + 2, i + 4);
+      if (!/^[0-9A-F]{2}$/.test(hex)) throw new Error(`invalid escape at ${i}`);
+      bytes.push(parseInt(hex, 16)); i += 3; continue;
+    }
     if (next === '_') { flush('_'); i += 1; continue; }
     if (!reverse[next]) throw new Error(`invalid escape at ${i}`);
     flush(reverse[next]); i += 1;
@@ -81,12 +94,56 @@ function conversationKey(ep) {
   return ep.conversationId;
 }
 
-function readStore(storePath) {
+const SHORT_ID = /^(dm|group|channel)-_(\d+)$/;
+
+function validateStore(data, source) {
+  const ok = data !== null && typeof data === 'object' && !Array.isArray(data)
+    && data.ids !== null && typeof data.ids === 'object' && !Array.isArray(data.ids)
+    && Number.isSafeInteger(data.next) && data.next >= 1
+    && Object.values(data.ids).every(v => typeof v === 'string' && SHORT_ID.test(v));
+  if (!ok) throw new Error(`session group store ${source} is invalid; refusing to use or overwrite it`);
+  const values = Object.values(data.ids);
+  if (new Set(values).size !== values.length) {
+    throw new Error(`session group store ${source} maps two conversations to one id; refusing to use it`);
+  }
+  return data;
+}
+
+function parseStoreFile(file) {
+  const raw = fs.readFileSync(file, 'utf8');
+  let data;
   try {
-    const data = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-    if (data && typeof data.ids === 'object' && Number.isInteger(data.next)) return data;
-  } catch { /* missing or unreadable: empty store */ }
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`session group store ${file} is not valid JSON; refusing to use or overwrite it`);
+  }
+  return validateStore(data, file);
+}
+
+/**
+ * Read the store. Only a missing file (with no backup) is an empty store;
+ * anything unreadable or malformed throws and the file is left untouched.
+ */
+export function readStore(storePath) {
+  try {
+    return parseStoreFile(storePath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  try {
+    const restored = parseStoreFile(`${storePath}.bak`);
+    console.warn(`[ms-teams] ${storePath} missing; using backup ${storePath}.bak`);
+    return restored;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
   return { ids: {}, next: 1 };
+}
+
+function nextNumber(store, now) {
+  let max = 0;
+  for (const v of Object.values(store.ids)) max = Math.max(max, Number(SHORT_ID.exec(v)[2]));
+  return Math.max(store.next, max + 1, now);
 }
 
 /**
@@ -96,10 +153,12 @@ function readStore(storePath) {
  * @param {boolean} [opts.create=false] - assign a short id for a long, unseen
  *   conversation (receiver only); lookups never create
  * @param {string} [opts.storePath]
+ * @param {() => number} [opts.now] - clock for new short ids (tests)
  * @returns {string} group name (never '')
- * @throws {Error} invalid endpoint, or long conversation with no stored id
+ * @throws {Error} invalid endpoint, long conversation with no stored id, or
+ *   corrupt/invalid store (never overwritten)
  */
-export function sessionGroupFromEndpoint(endpoint, { create = false, storePath = SESSION_GROUP_STORE } = {}) {
+export function sessionGroupFromEndpoint(endpoint, { create = false, storePath = SESSION_GROUP_STORE, now = Date.now } = {}) {
   const ep = parseEndpoint(endpoint);
   if (ep.conversationId === 'admin' && ep.type === 'dm-pairing') return 'admin';
   const prefix = PREFIX[ep.type];
@@ -114,9 +173,13 @@ export function sessionGroupFromEndpoint(endpoint, { create = false, storePath =
   const store = readStore(storePath);
   if (store.ids[storeKey]) return store.ids[storeKey];
   if (!create) throw new Error(`no session group stored for this long ${prefix} conversation`);
-  const short = `${prefix}-_${store.next}`;
+  const n = nextNumber(store, now());
+  const short = `${prefix}-_${n}`;
   store.ids[storeKey] = short;
-  store.next += 1;
+  store.next = n + 1;
+  // Backup first, both durable: if the main file is later lost, the backup
+  // already holds every assigned id.
+  writeJsonAtomic(`${storePath}.bak`, store, 0o600);
   writeJsonAtomic(storePath, store, 0o600);
   return short;
 }

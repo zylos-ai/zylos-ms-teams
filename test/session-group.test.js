@@ -40,11 +40,61 @@ describe('sessionGroupFromEndpoint', () => {
   it('long ids get a stored short id; lookups reuse it and never create', () => {
     const store = tmpStore();
     const ep = `${DM_ID}|type:dm|user:u|msg:m`;
+    const now = () => 1000;
     expect(() => sessionGroupFromEndpoint(ep, { storePath: store })).toThrow(/no session group stored/);
-    const name = sessionGroupFromEndpoint(ep, { create: true, storePath: store });
-    expect(name).toBe('dm-_1');
-    expect(sessionGroupFromEndpoint(ep, { storePath: store })).toBe('dm-_1');
-    expect(sessionGroupFromEndpoint(`${DM_ID}x|type:dm`, { create: true, storePath: store })).toBe('dm-_2');
+    const name = sessionGroupFromEndpoint(ep, { create: true, storePath: store, now });
+    expect(name).toBe('dm-_1000');
+    expect(sessionGroupFromEndpoint(ep, { storePath: store })).toBe('dm-_1000');
+    expect(sessionGroupFromEndpoint(`${DM_ID}x|type:dm`, { create: true, storePath: store, now })).toBe('dm-_1001');
+  });
+
+  it('existing stored ids stay; numbering never goes below stored next or max id', () => {
+    const store = tmpStore();
+    fs.writeFileSync(store, JSON.stringify({ ids: { 'dm|old': 'dm-_7' }, next: 3 }));
+    expect(sessionGroupFromEndpoint('old|type:dm', { storePath: store })).toBe('dm-old');
+    expect(sessionGroupFromEndpoint(`${DM_ID}|type:dm`, { create: true, storePath: store, now: () => 1 })).toBe('dm-_8');
+  });
+
+  it.each([
+    ['truncated JSON', '{"ids": {"dm|a": "dm-_1"'],
+    ['empty file (rename without fsync)', ''],
+    ['ids: null', '{"ids": null, "next": 2}'],
+    ['ids array', '{"ids": [], "next": 2}'],
+    ['bad next', '{"ids": {}, "next": "2"}'],
+    ['bad value', '{"ids": {"dm|a": "evil"}, "next": 2}'],
+    ['duplicate ids', '{"ids": {"dm|a": "dm-_1", "dm|b": "dm-_1"}, "next": 2}'],
+  ])('corrupt store (%s): create throws and the file is not rewritten', (_n, content) => {
+    const store = tmpStore();
+    fs.writeFileSync(store, content);
+    expect(() => sessionGroupFromEndpoint(`${DM_ID}|type:dm`, { create: true, storePath: store })).toThrow(/session group store/);
+    expect(() => sessionGroupFromEndpoint(`${DM_ID}|type:dm`, { storePath: store })).toThrow(/session group store/);
+    expect(fs.readFileSync(store, 'utf8')).toBe(content);
+  });
+
+  it('lost store never reuses an id (A -> dm-_1 earlier, B after loss gets a new id)', () => {
+    const store = tmpStore();
+    const a = sessionGroupFromEndpoint(`${DM_ID}A|type:dm`, { create: true, storePath: store, now: () => 5000 });
+    fs.rmSync(store);
+    fs.rmSync(`${store}.bak`, { force: true });
+    const b = sessionGroupFromEndpoint(`${DM_ID}B|type:dm`, { create: true, storePath: store, now: () => 5001 });
+    expect(b).not.toBe(a);
+  });
+
+  it('missing store is restored from .bak, keeping earlier ids', () => {
+    const store = tmpStore();
+    const now = () => 10;
+    const a = sessionGroupFromEndpoint(`${DM_ID}A|type:dm`, { create: true, storePath: store, now });
+    const b = sessionGroupFromEndpoint(`${DM_ID}B|type:dm`, { create: true, storePath: store, now });
+    fs.rmSync(store);
+    expect(sessionGroupFromEndpoint(`${DM_ID}A|type:dm`, { storePath: store })).toBe(a);
+    const c = sessionGroupFromEndpoint(`${DM_ID}C|type:dm`, { create: true, storePath: store, now });
+    expect([a, b]).not.toContain(c);
+  });
+
+  it('unescapeId rejects malformed _x escapes', () => {
+    expect(() => unescapeId('a_xZZ')).toThrow(/invalid escape/);
+    expect(() => unescapeId('a_x4')).toThrow(/invalid escape/);
+    expect(unescapeId('a_x20b')).toBe('a b');
   });
 
   it('escaping is reversible and one-to-one', () => {

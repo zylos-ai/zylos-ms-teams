@@ -265,11 +265,18 @@ component-side kill timeout. Groups are one per Teams conversation (channel
 posts separately); ids are escaped reversibly and long names use a short id
 stored in `session-groups.json`.
 
-`scripts/send.js` applies `src/lib/outbound-policy.js` before any send: DM
-recipients come from the stored conversation reference, not the endpoint;
-non-allowed group/channel sends are allowed only as replies to an owner message
-found in the component's inbound log (`logs/<chat>.jsonl`, written only after
-access checks pass). Missing proof denies.
+`scripts/send.js` applies `src/lib/outbound-policy.js` before any send: the
+conversation type is the stored reference's `conversationType` (captured on
+inbound), and must equal the endpoint's declared type; unknown means denied.
+DM recipients come from the stored personal-chat reference. Non-allowed
+channel sends are allowed only as threaded replies (every chunk, no media, no
+plain fallback) to an owner message recorded as `accepted` in the component's
+inbound log (`logs/<chat>.jsonl`). Missing proof denies.
+
+The short-id store fails closed on corruption, keeps a durable `.bak`, and
+numbers new ids from max(next, highest id + 1, now in ms) so ids are never
+reused. c4-receive is retried only after a spawn failure; any other
+unstructured failure is reported as uncertain and not retried.
 
 ## 5. Security
 

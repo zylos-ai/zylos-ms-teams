@@ -76,7 +76,7 @@ export function registerRoutes(expressApp, deps) {
       return res.status(403).json({ error: 'unauthorized' });
     }
 
-    const { conversationId, text, type, replyToId, attachments, returnActivityId } = req.body || {};
+    const { conversationId, text, type, replyToId, attachments, returnActivityId, requireReply } = req.body || {};
     if (!conversationId || (!text && !attachments?.length)) {
       return res.status(400).json({ error: 'missing conversationId or message content' });
     }
@@ -91,7 +91,12 @@ export function registerRoutes(expressApp, deps) {
       }
 
       const routeConfig = resolveRouteConfig(type || 'dm', conversationId, getConfig());
-      const effectiveReplyToId = routeConfig.replyStyle === 'new' ? '' : replyToId;
+      // requireReply: the outbound policy only allowed this send as a threaded
+      // channel reply; never degrade it to a plain post.
+      const effectiveReplyToId = requireReply ? replyToId : (routeConfig.replyStyle === 'new' ? '' : replyToId);
+      if (requireReply && (type !== 'channel' || !effectiveReplyToId || !reference.serviceUrl)) {
+        return res.status(400).json({ error: 'reply required but this send cannot be delivered as a threaded channel reply' });
+      }
       let activityId = '';
       const useBotConnector = returnActivityId || (type === 'channel' && effectiveReplyToId && reference.serviceUrl);
 

@@ -24,7 +24,7 @@ import { htmlToText, htmlToMarkdown, extractQuotedReply, extractReplyBlockquote 
 import { createJwtMiddleware } from './lib/auth.js';
 import { isGraphEnabled, acquireTokenForScope, fetchChatHistory, fetchChannelHistory, getThreadMessages, probeGraphToken } from './lib/graph.js';
 import { resolveInboundMedia } from './lib/attachments.js';
-import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds } from './lib/format.js';
+import { escapeXml, buildEndpoint, getConversationType, formatMessage, extractChannelIds, channelPostConversationId, referenceWithConversationType } from './lib/format.js';
 import { getDelegatedToken, hasAuth, sendReaction, getAuthenticatedUsers, probeDelegatedAuth } from './lib/delegated-auth.js';
 import { syncSubscriptions, startRenewalLoop, stopRenewalLoop, fetchMessage, fetchReplyMessage } from './lib/channel-subscriptions.js';
 import { writeJsonAtomic } from './lib/atomic-write.js';
@@ -479,7 +479,10 @@ async function saveConvRef(activity, ref) {
     user: activity.from,
   };
 
-  await saveConversationReference(conversationId, convRef, { tenantId });
+  // The outbound policy decides DM vs group/channel from this stored type.
+  const stored = referenceWithConversationType(convRef, activity);
+
+  await saveConversationReference(conversationId, stored, { tenantId });
 }
 
 // ── Message Handler ──
@@ -513,6 +516,8 @@ async function handleMessage(ctx) {
       user_id: senderAadObjectId,
       user_name: senderName,
       text: historyText,
+      // Only accepted inbound records are proof for the outbound owner-reply rule.
+      accepted: true,
     });
   }
 
@@ -955,9 +960,10 @@ async function handleChannelNotification(notification) {
     })) return;
   }
 
-  const threadConversationId = rootMessageId
-    ? `${channelId};messageid=${rootMessageId}`
-    : channelId;
+  // One post = one thread = one session group: a top-level post is keyed by
+  // its own id, as Bot Framework reports `<channel>;messageid=<post>` for it,
+  // so later replies in that post land in the same group and history.
+  const threadConversationId = channelPostConversationId(channelId, messageId, rootMessageId);
 
   recordHistory(threadConversationId, {
     timestamp: graphMsg.createdDateTime || new Date().toISOString(),
@@ -965,6 +971,7 @@ async function handleChannelNotification(notification) {
     user_id: senderAadId,
     user_name: senderName,
     text,
+    accepted: true,
   });
 
   const channelName = access.getConversationName('channel', conversationId);

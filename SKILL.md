@@ -120,12 +120,26 @@ Replies still go through the same `reply via` path.
 - Ids are escaped reversibly for Core (`_`→`__`, `@`→`_a`, `;`→`_s`, `=`→`_e`,
   `/`→`_f`, `+`→`_p`, `,`→`_c`, other bytes `_xHH`). A name over 95 characters
   gets a short id (`<prefix>-_<n>`) assigned once by the receiver and kept in
-  `session-groups.json`; never truncated or hashed.
-- Each channel post is its own group. To group a whole channel instead, change
-  only `conversationKey` in `src/lib/session-group.js` (plan with Core: names
-  are fixed once live).
-- The group is passed only if the installed Core lists `--session-group` in
-  `c4-receive-options.json`; older Cores behave exactly as before.
+  `session-groups.json` (plus a `.bak` copy); never truncated or hashed.
+- Short ids are never reused. New numbers start at least at the current time
+  in milliseconds, so a lost store cannot hand an old id to a new
+  conversation. A corrupt or invalid store is never treated as empty or
+  overwritten: inbound messages for long-id conversations are refused (the
+  sender gets a "try again later" notice) until an operator repairs it, e.g.
+  from `session-groups.json.bak`.
+- Each channel post is its own group, including posts the bot only sees via
+  smart-mode subscriptions: a top-level post uses `<channel>;messageid=<post>`
+  and its replies land in the same group. To group a whole channel instead,
+  change only `conversationKey` in `src/lib/session-group.js` (plan with Core:
+  names are fixed once live).
+- The group is resolved (and stored) only if the installed Core lists
+  `--session-group` in `c4-receive-options.json`; older Cores behave exactly
+  as before.
+- **`admin` thread (DM pairing notices):** this thread cannot reply to its
+  endpoint (`admin|type:dm-pairing` is denied outbound) and does not see the
+  owner's DM thread. Do not try to reply there: the notice is informational,
+  and the owner approves or denies with `admin.js dm-approve` / `dm-deny`
+  (or `dm-pending` to list), typically from their own DM thread.
 
 ```bash
 node ~/zylos/.claude/skills/ms-teams/scripts/session-group.js "<endpoint>"
@@ -133,13 +147,22 @@ node ~/zylos/.claude/skills/ms-teams/scripts/session-group.js "<endpoint>"
 
 ## Outbound Policy
 
-`send.js` checks the destination before sending:
-- **DM:** the recipient stored with the conversation must pass the inbound DM
-  policy (owner first; `dmPolicy: disabled` blocks all).
+`send.js` checks the destination before sending. DM vs group vs channel is
+the **real** conversation type stored from Teams on inbound
+(`conversationType`: personal / groupChat / channel), never the endpoint's
+`type:`. A declared type that differs, an unknown conversation, or an unknown
+stored type is blocked.
+- **DM:** the person in that personal chat must pass the inbound DM policy
+  (owner first; `dmPolicy: disabled` blocks all).
 - **Group chat / channel:** allowed when inbound access allows the
-  conversation. Otherwise only a reply to an accepted message the owner sent
-  there (proven by the component's inbound log). `groupPolicy: disabled`
-  blocks all, as inbound does.
+  conversation. `groupPolicy: disabled` blocks all, as inbound does.
+- **Owner-reply exception (channels only):** in a channel not otherwise
+  allowed, a text/card reply to an accepted owner message in that post
+  (`msg:` in the endpoint, proven by an `accepted` record in the component's
+  inbound log) is allowed. Every chunk is sent as a threaded reply to that
+  message (even with `replyStyle: new`), never as a plain post; media is
+  refused. Group chats have no reply threading in Teams, so there is no
+  exception there.
 - Blocked sends exit 1 with `outbound blocked`; nothing is sent.
 
 ## Media Messages

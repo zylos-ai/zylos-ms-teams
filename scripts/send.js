@@ -19,7 +19,7 @@ import { getConfig, DATA_DIR, resolveRouteConfig } from '../src/lib/config.js';
 import { splitMarkdownMessage } from '../src/lib/markdown-split.js';
 import { parseCardMarker } from '../src/lib/card-send.js';
 import { getConversationReference } from '../src/lib/conversation-store.js';
-import { outboundDenialReason, findLoggedMessage } from '../src/lib/outbound-policy.js';
+import { outboundDecision, findLoggedMessage } from '../src/lib/outbound-policy.js';
 
 const MAX_LENGTH = 4000;
 
@@ -58,7 +58,11 @@ if (!config.enabled) {
 }
 
 const routeConfig = resolveRouteConfig(parsedEndpoint.type || 'dm', parsedEndpoint.conversationId, config);
+// Set by assertOutboundAllowed: the send is only allowed as a threaded reply
+// to parsedEndpoint.msg (every chunk, no plain-send fallback, no media).
+let replyOnly = false;
 function threadedReplyToId() {
+  if (replyOnly) return parsedEndpoint.msg;
   if (routeConfig.replyStyle === 'new') return null;
   return parsedEndpoint.msg || null;
 }
@@ -85,6 +89,7 @@ async function sendViaInternal(conversationId, text, { replyToId, attachments, r
   if (replyToId) payload.replyToId = replyToId;
   if (attachments?.length) payload.attachments = attachments;
   if (returnActivityId) payload.returnActivityId = true;
+  if (replyOnly) payload.requireReply = true;
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -207,7 +212,8 @@ async function sendText(text) {
       replyToId: triggerMsgId || undefined,
       returnActivityId: true,
     });
-  } catch {
+  } catch (err) {
+    if (replyOnly) throw err;
     const opts = {};
     if (triggerMsgId) opts.replyToId = triggerMsgId;
     await sendViaInternal(conversationId, chunks[0], opts);
@@ -215,7 +221,7 @@ async function sendText(text) {
 
   for (let i = 1; i < chunks.length; i++) {
     await sleep(500);
-    await sendViaInternal(conversationId, chunks[i]);
+    await sendViaInternal(conversationId, chunks[i], replyOnly ? { replyToId: triggerMsgId } : {});
   }
 
   console.log(`Sent ${chunks.length} chunks`);
@@ -247,20 +253,25 @@ async function removeThinkingReaction() {
 }
 
 async function assertOutboundAllowed() {
-  const ref = (parsedEndpoint.type || 'dm') === 'dm'
-    ? await getConversationReference(parsedEndpoint.conversationId)
-    : null;
-  const reason = outboundDenialReason(config, parsedEndpoint, {
-    getRecipient: () => (ref?.user ? { aadObjectId: ref.user.aadObjectId, name: ref.user.name } : null),
+  // Same lookup order as /internal/send, so the checked conversation is the
+  // one the message would go to. Its real type comes from the stored ref.
+  const id = parsedEndpoint.conversationId || '';
+  const ref = await getConversationReference(id.split(';')[0]) || await getConversationReference(id);
+  const decision = outboundDecision(config, parsedEndpoint, {
+    ref,
     findMessage: (conversationId, messageId) => findLoggedMessage(conversationId, messageId),
   });
-  if (reason) throw new Error(`outbound blocked: ${reason}`);
+  if (decision.reason) throw new Error(`outbound blocked: ${decision.reason}`);
+  replyOnly = !!decision.replyOnly;
 }
 
 async function send() {
   try {
     await assertOutboundAllowed();
     const media = parseMediaPrefix(message);
+    if (media && replyOnly) {
+      throw new Error('outbound blocked: media cannot be sent as a threaded reply here; only text replies to the owner message are allowed');
+    }
     if (media) {
       await sendMedia(media.mediaType, media.filePath);
     } else {

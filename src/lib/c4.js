@@ -50,6 +50,14 @@ export function classifyC4Rejection(response) {
 }
 
 /**
+ * True only when the child process could not be started at all (so Core
+ * never saw the message). Mirrors zylos-telegram v0.6.0 (#80).
+ */
+export function isSpawnFailure(error) {
+  return typeof error?.syscall === 'string' && error.syscall.startsWith('spawn');
+}
+
+/**
  * Create the inbound sender. The session group is derived from the endpoint
  * and passed only when the installed Core lists --session-group (rechecked on
  * every attempt). A rejected group is never dropped and resent to the overall
@@ -59,7 +67,8 @@ export function classifyC4Rejection(response) {
  *
  * Callbacks: onReject(notice) when the agent will not answer — a user-facing
  * notice, or null when Core already committed the row (send nothing);
- * onFail() when c4-receive failed twice without a structured answer.
+ * onFail() when the outcome is uncertain (no structured answer and not a
+ * spawn failure), or a spawn failure persisted after one retry.
  */
 export function createC4Sender({
   c4Receive = DEFAULT_C4_RECEIVE,
@@ -78,9 +87,11 @@ export function createC4Sender({
       return;
     }
 
+    // Resolve (and possibly assign/store) a group only when Core accepts it;
+    // older Core has a single session and needs no mapping.
     let sessionGroup;
     try {
-      sessionGroup = resolveGroup(endpoint);
+      if (c4ReceiveSupportsOption('--session-group', c4Receive)) sessionGroup = resolveGroup(endpoint);
     } catch (err) {
       // Never fall back to the overall group.
       logger.error(`[ms-teams] cannot derive session group, not sending: ${err.message}`);
@@ -116,7 +127,15 @@ export function createC4Sender({
         return;
       }
 
-      logger.warn(`[ms-teams] C4 send failed, retrying in ${retryDelayMs}ms: ${error.message}`);
+      // Retry only when c4-receive provably never ran (spawn failure). Any
+      // other unstructured failure may have stored the message already, and
+      // Core forbids retrying an uncertain inbound call.
+      if (!isSpawnFailure(error)) {
+        logger.error(`[ms-teams] C4 send outcome uncertain, not retrying: ${error.message}`);
+        if (onFail) onFail();
+        return;
+      }
+      logger.warn(`[ms-teams] c4-receive could not start, retrying in ${retryDelayMs}ms: ${error.message}`);
       setTimeout(() => {
         run((retryError, retryStdout) => {
           if (!retryError) {

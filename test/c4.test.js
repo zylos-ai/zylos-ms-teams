@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createC4Sender, GENERIC_REJECT_REPLY, UNCERTAIN_REPLY } from '../src/lib/c4.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createC4Sender, isSpawnFailure, GENERIC_REJECT_REPLY, UNCERTAIN_REPLY } from '../src/lib/c4.js';
+
+/** A c4-receive path whose Core lists --session-group (multi-session Core). */
+function multiSessionC4() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'teams-c4ms-'));
+  fs.writeFileSync(path.join(dir, 'c4-receive-options.json'), JSON.stringify({ options: { '--session-group': {} } }));
+  return path.join(dir, 'c4-receive.js');
+}
+
+function spawnFailure(message = 'spawn node ENOENT') {
+  const error = Object.assign(new Error(message), { code: 'ENOENT', syscall: 'spawn node' });
+  return { error, stdout: '' };
+}
 
 function makeLogger() {
   return {
@@ -36,8 +51,35 @@ describe('sendToC4 onFail handling', () => {
     vi.useRealTimers();
   });
 
+  it('uncertain failure (c4-receive ran, no structured answer): no retry, onFail once', async () => {
+    const execFileImpl = makeExecFile([failure('exit 1 after write'), failure('never used')]);
+    const onFail = vi.fn();
+    const sendToC4 = createC4Sender({ c4Receive: '/tmp/c4-receive.js', execFileImpl, retryDelayMs: 2000, logger: makeLogger() });
+    sendToC4('ms-teams', 'conversation-1|type:dm', 'hello', { onFail });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(execFileImpl).toHaveBeenCalledTimes(1);
+    expect(onFail).toHaveBeenCalledTimes(1);
+  });
+
+  it('maxBuffer overflow is uncertain too: no retry', async () => {
+    const err = Object.assign(new Error('stdout maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+    const execFileImpl = makeExecFile([{ error: err, stdout: '' }]);
+    const onFail = vi.fn();
+    const sendToC4 = createC4Sender({ c4Receive: '/tmp/c4-receive.js', execFileImpl, logger: makeLogger() });
+    sendToC4('ms-teams', 'conversation-1|type:dm', 'hello', { onFail });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(execFileImpl).toHaveBeenCalledTimes(1);
+    expect(onFail).toHaveBeenCalledTimes(1);
+  });
+
+  it('isSpawnFailure only matches spawn syscalls', () => {
+    expect(isSpawnFailure(spawnFailure().error)).toBe(true);
+    expect(isSpawnFailure(new Error('x'))).toBe(false);
+    expect(isSpawnFailure(Object.assign(new Error('x'), { syscall: 'read' }))).toBe(false);
+  });
+
   it('fires onFail when both send attempts fail', async () => {
-    const execFileImpl = makeExecFile([failure(), failure('still down')]);
+    const execFileImpl = makeExecFile([spawnFailure(), spawnFailure('still down')]);
     const onFail = vi.fn();
     const sendToC4 = createC4Sender({
       c4Receive: '/tmp/c4-receive.js',
@@ -71,7 +113,7 @@ describe('sendToC4 onFail handling', () => {
   });
 
   it('does not fire onFail when the retry succeeds', async () => {
-    const execFileImpl = makeExecFile([failure(), { stdout: 'ok' }]);
+    const execFileImpl = makeExecFile([spawnFailure(), { stdout: 'ok' }]);
     const onFail = vi.fn();
     const sendToC4 = createC4Sender({
       c4Receive: '/tmp/c4-receive.js',
@@ -136,9 +178,27 @@ describe('sendToC4 session groups and rejection classes', () => {
   it('unmappable endpoint is never sent to the overall group', () => {
     const execFileImpl = vi.fn();
     const onReject = vi.fn();
-    const send = createC4Sender({ execFileImpl, logger: makeLogger(), resolveGroup: () => { throw new Error('bad'); } });
+    const send = createC4Sender({ c4Receive: multiSessionC4(), execFileImpl, logger: makeLogger(), resolveGroup: () => { throw new Error('bad'); } });
     send('ms-teams', 'c', 'hi', { onReject });
     expect(execFileImpl).not.toHaveBeenCalled();
     expect(onReject).toHaveBeenCalledWith(GENERIC_REJECT_REPLY);
+  });
+
+  it('old Core (no --session-group): the group is never resolved or stored', () => {
+    const execFileImpl = vi.fn((cmd, args, options, cb) => cb(null, 'ok'));
+    const resolveGroup = vi.fn(() => { throw new Error('store write failed'); });
+    const onReject = vi.fn();
+    const send = createC4Sender({ c4Receive: '/tmp/none/c4-receive.js', execFileImpl, logger: makeLogger(), resolveGroup });
+    send('ms-teams', 'c|type:dm', 'hi', { onReject });
+    expect(resolveGroup).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
+    expect(execFileImpl.mock.calls[0][1]).not.toContain('--session-group');
+  });
+
+  it('multi-session Core: resolved group is passed', () => {
+    const execFileImpl = vi.fn((cmd, args, options, cb) => cb(null, 'ok'));
+    const send = createC4Sender({ c4Receive: multiSessionC4(), execFileImpl, logger: makeLogger(), resolveGroup: () => 'dm-x' });
+    send('ms-teams', 'c|type:dm', 'hi', {});
+    expect(execFileImpl.mock.calls[0][1].slice(-2)).toEqual(['--session-group', 'dm-x']);
   });
 });

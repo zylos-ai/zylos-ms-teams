@@ -17,9 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when Core lists it in `c4-receive-options.json`.
 - `scripts/session-group.js <endpoint>` prints the group (exit 1, no output,
   for unknown or invalid endpoints).
-- Outbound destination policy in `send.js`: DMs only to recipients the
-  inbound DM policy accepts; group chats/channels only when allowed inbound,
-  else only replies to logged owner messages. Blocked sends exit 1.
+- Outbound destination policy in `send.js`, keyed on the real stored
+  conversation type (endpoint `type:` must match; unknown denied): DMs only to
+  recipients the inbound DM policy accepts; group chats/channels only when
+  allowed inbound, else (channels only) threaded text replies to accepted
+  owner messages. Blocked sends exit 1.
+- Short-id store fails closed on corruption, writes a durable `.bak`, and
+  never reuses an id after loss.
+- Smart-mode channel top-level posts get their own group
+  (`<channel>;messageid=<post>`), shared with their replies.
+- c4-receive is retried only on spawn failure; uncertain outcomes are not
+  retried.
 
 ### Changed
 - Channel posts keep their own history: the context block, the replay log
