@@ -12,19 +12,25 @@
  *   personal chat has exactly one human member) and must pass inbound
  *   `isDmAllowed` (owner first; `dmPolicy: disabled` denies all).
  * - Group chat / channel: allowed when inbound `isConversationAllowed` allows
- *   it. Otherwise, in a channel only, a threaded reply to an accepted message
- *   the owner sent there (proven by an `accepted: true` record in the
- *   component's inbound log). The result then carries `replyOnly`: every chunk
- *   must be sent as a reply to that message, with no plain-send fallback, and
- *   media is refused. Group chats have no reply threading in Teams, so there
- *   is no owner-reply exception for them. `groupPolicy: disabled` denies
- *   everything, as inbound does.
+ *   it. Otherwise (inbound accepts the owner there too) a reply to an
+ *   accepted message the owner sent in that same conversation within the
+ *   last OWNER_REPLY_TTL_MS (endpoint `msg:`, proven by an `accepted: true`
+ *   record with a timestamp in the component's inbound log):
+ *   - channel: the result carries `replyOnly`: every chunk must be sent as a
+ *     threaded reply to that message, with no plain-send fallback, and media
+ *     is refused;
+ *   - group chat: Teams has no reply threads there, so it is a normal post.
+ *   Proactive sends (no `msg:`), replies to non-owner or expired messages are
+ *   denied. `groupPolicy: disabled` denies everything, as inbound does.
  * - Any other type (e.g. `admin|type:dm-pairing`) is denied.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createAccessControl } from './access.js';
 import { LOGS_DIR, chatIdToLogFile } from './context.js';
+
+/** How long an accepted owner message proves an owner-reply (7 days). */
+export const OWNER_REPLY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const TEAMS_TYPE = { personal: 'dm', groupChat: 'group', channel: 'channel' };
 
@@ -67,9 +73,10 @@ export function findLoggedMessage(conversationId, messageId, logsDir = LOGS_DIR)
  * @param {object} deps
  * @param {object|null} deps.ref - stored conversation reference for the endpoint
  * @param {(conversationId: string, messageId: string) => object|null} deps.findMessage
+ * @param {() => number} [deps.now] - clock for the owner-reply window (tests)
  * @returns {{reason: string|null, replyOnly?: boolean}} reason null when allowed
  */
-export function outboundDecision(config, ep, { ref, findMessage }) {
+export function outboundDecision(config, ep, { ref, findMessage, now = Date.now }) {
   const deny = (reason) => ({ reason });
   const access = createAccessControl(() => config, () => ({}));
   const conversationId = ep?.conversationId;
@@ -94,11 +101,15 @@ export function outboundDecision(config, ep, { ref, findMessage }) {
 
   if (access.isConversationAllowed(real, conversationId)) return { reason: null };
   const policy = config.groupPolicy || 'allowlist';
-  if (policy !== 'disabled' && real === 'channel' && ep.msg) {
+  if (policy !== 'disabled' && ep.msg) {
     const entry = findMessage(conversationId, ep.msg);
-    if (entry && access.isOwner(entry.user_id)) return { reason: null, replyOnly: true };
+    const at = Date.parse(entry?.timestamp ?? '');
+    const fresh = Number.isFinite(at) && now() - at <= OWNER_REPLY_TTL_MS;
+    if (entry && fresh && access.isOwner(entry.user_id)) {
+      return real === 'channel' ? { reason: null, replyOnly: true } : { reason: null };
+    }
   }
-  return deny(`${real} ${conversationId} is not allowed (groupPolicy=${policy}) and the message is not a channel reply to an accepted owner message`);
+  return deny(`${real} ${conversationId} is not allowed (groupPolicy=${policy}) and the message is not a reply to a recent accepted owner message`);
 }
 
 /** Back-compat wrapper: denial reason or null. */

@@ -129,7 +129,7 @@ describe('scripts/send.js owner-reply exception (review item 5)', () => {
       '19:c@thread.tacv2': { conversation: { id: '19:c@thread.tacv2', conversationType: 'channel' }, serviceUrl: 'https://s', savedAt: Date.now() },
     }));
     fs.writeFileSync(path.join(dataDir, 'logs', '19_c_thread.tacv2_messageid_1.jsonl'),
-      JSON.stringify({ message_id: 'm1', user_id: 'aad-owner', accepted: true }) + '\n');
+      JSON.stringify({ message_id: 'm1', user_id: 'aad-owner', accepted: true, timestamp: new Date().toISOString() }) + '\n');
   });
 
   afterEach(async () => {

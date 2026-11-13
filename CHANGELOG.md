@@ -20,10 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Outbound destination policy in `send.js`, keyed on the real stored
   conversation type (endpoint `type:` must match; unknown denied): DMs only to
   recipients the inbound DM policy accepts; group chats/channels only when
-  allowed inbound, else (channels only) threaded text replies to accepted
-  owner messages. Blocked sends exit 1.
-- Short-id store fails closed on corruption, writes a durable `.bak`, and
-  never reuses an id after loss.
+  allowed inbound, else replies to accepted owner messages in that
+  conversation from the last 7 days (channels: threaded text replies only;
+  group chats: normal posts). Blocked sends exit 1.
+- Short-id store writes a durable `.bak` first, recovers a missing or corrupt
+  main file from a valid `.bak` (corrupt file kept as `.corrupt-<ts>`), fails
+  closed when neither is usable, and never reuses an id after loss.
+- `writeJsonAtomic` fsyncs only with `{ durable: true }` (session groups,
+  config, tokens); hot-path caches no longer block on fsync.
 - Smart-mode channel top-level posts get their own group
   (`<channel>;messageid=<post>`), shared with their replies.
 - c4-receive is retried only on spawn failure; uncertain outcomes are not

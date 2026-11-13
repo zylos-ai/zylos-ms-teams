@@ -19,12 +19,13 @@
  * therefore cannot equal any escaped name.
  * Never truncated or hashed. Core prefixes the namespace; never add it here.
  *
- * Short ids must never be reused (Core and the scheduler keep them): a
- * corrupt or structurally invalid store is an error (never treated as empty
- * or overwritten), every write also writes a durable `.bak` copy, a missing
- * store is restored from `.bak` when present, and new numbers start at
- * max(stored next, highest stored id + 1, current time in ms), so even after
- * the store is lost a new id cannot equal an earlier one.
+ * Short ids must never be reused (Core and the scheduler keep them): every
+ * write also writes a durable `.bak` copy first; a missing or corrupt store
+ * is recovered from a valid `.bak` (a corrupt one is moved aside, never
+ * overwritten in place); if neither is usable the store is an error, never
+ * treated as empty. New numbers start at max(stored next, highest stored
+ * id + 1, current time in ms); if both files are missing the time base is
+ * ms*1000 + random, so a new id cannot equal an earlier one.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -120,30 +121,65 @@ function parseStoreFile(file) {
   return validateStore(data, file);
 }
 
+const EMPTY_STORE = () => ({ ids: {}, next: 1 });
+
 /**
- * Read the store. Only a missing file (with no backup) is an empty store;
- * anything unreadable or malformed throws and the file is left untouched.
+ * Load the store and say how it was found:
+ * - main file valid -> use it
+ * - main file missing -> use `.bak` if present
+ * - main file corrupt/invalid but `.bak` valid -> use `.bak`, move the bad file
+ *   aside to `<store>.corrupt-<ts>` (kept for inspection) and log an error; the
+ *   next create writes the main file back. `.bak` is always written first, so
+ *   it holds every id the main file did.
+ * - both missing -> empty store, `lost: true` (caller makes numbering
+ *   collision-proof)
+ * - anything else (both bad, or main bad and no `.bak`) throws; nothing is
+ *   rewritten.
  */
-export function readStore(storePath) {
+function loadStore(storePath) {
+  const bakPath = `${storePath}.bak`;
+  let mainErr;
   try {
-    return parseStoreFile(storePath);
+    return { store: parseStoreFile(storePath), lost: false };
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    mainErr = err;
   }
+  let bak;
   try {
-    const restored = parseStoreFile(`${storePath}.bak`);
-    console.warn(`[ms-teams] ${storePath} missing; using backup ${storePath}.bak`);
-    return restored;
+    bak = parseStoreFile(bakPath);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (mainErr.code === 'ENOENT' && err.code === 'ENOENT') return { store: EMPTY_STORE(), lost: true };
+    throw mainErr.code === 'ENOENT' ? err : mainErr;
   }
-  return { ids: {}, next: 1 };
+  if (mainErr.code === 'ENOENT') {
+    console.warn(`[ms-teams] ${storePath} missing; using backup ${bakPath}`);
+  } else {
+    const aside = `${storePath}.corrupt-${Date.now()}`;
+    fs.renameSync(storePath, aside);
+    console.error(`[ms-teams] ${mainErr.message}; moved it to ${aside} and using backup ${bakPath}`);
+  }
+  return { store: bak, lost: false };
 }
 
-function nextNumber(store, now) {
+/**
+ * Read the store (see loadStore). A missing store with no backup is empty;
+ * a store that cannot be recovered from `.bak` throws and is left untouched.
+ */
+export function readStore(storePath) {
+  return loadStore(storePath).store;
+}
+
+/**
+ * Next short-id number. Normally max(stored next, highest id + 1, now ms).
+ * If both store files are gone, earlier ids may have run ahead of the clock
+ * (fast allocation, clock moved back), so the base becomes now*1000 plus a
+ * random 0-999, which is far above any ms-based number.
+ */
+function nextNumber(store, now, lost, random) {
   let max = 0;
   for (const v of Object.values(store.ids)) max = Math.max(max, Number(SHORT_ID.exec(v)[2]));
-  return Math.max(store.next, max + 1, now);
+  const base = lost ? now * 1000 + Math.floor(random() * 1000) : now;
+  return Math.max(store.next, max + 1, base);
 }
 
 /**
@@ -154,11 +190,12 @@ function nextNumber(store, now) {
  *   conversation (receiver only); lookups never create
  * @param {string} [opts.storePath]
  * @param {() => number} [opts.now] - clock for new short ids (tests)
+ * @param {() => number} [opts.random] - [0, 1) source for new short ids (tests)
  * @returns {string} group name (never '')
  * @throws {Error} invalid endpoint, long conversation with no stored id, or
  *   corrupt/invalid store (never overwritten)
  */
-export function sessionGroupFromEndpoint(endpoint, { create = false, storePath = SESSION_GROUP_STORE, now = Date.now } = {}) {
+export function sessionGroupFromEndpoint(endpoint, { create = false, storePath = SESSION_GROUP_STORE, now = Date.now, random = Math.random } = {}) {
   const ep = parseEndpoint(endpoint);
   if (ep.conversationId === 'admin' && ep.type === 'dm-pairing') return 'admin';
   const prefix = PREFIX[ep.type];
@@ -170,16 +207,19 @@ export function sessionGroupFromEndpoint(endpoint, { create = false, storePath =
   if (isValidSessionGroup(name)) return name;
 
   const storeKey = `${prefix}|${key}`;
-  const store = readStore(storePath);
+  const { store, lost } = loadStore(storePath);
   if (store.ids[storeKey]) return store.ids[storeKey];
   if (!create) throw new Error(`no session group stored for this long ${prefix} conversation`);
-  const n = nextNumber(store, now());
+  if (lost) {
+    console.warn(`[ms-teams] ${storePath} and its backup are both missing; new short ids use a collision-proof base`);
+  }
+  const n = nextNumber(store, now(), lost, random);
   const short = `${prefix}-_${n}`;
   store.ids[storeKey] = short;
   store.next = n + 1;
   // Backup first, both durable: if the main file is later lost, the backup
   // already holds every assigned id.
-  writeJsonAtomic(`${storePath}.bak`, store, 0o600);
-  writeJsonAtomic(storePath, store, 0o600);
+  writeJsonAtomic(`${storePath}.bak`, store, 0o600, { durable: true });
+  writeJsonAtomic(storePath, store, 0o600, { durable: true });
   return short;
 }

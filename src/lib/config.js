@@ -170,7 +170,7 @@ export function getConfig() {
 
 export function saveConfig(newConfig) {
   try {
-    writeJsonAtomic(CONFIG_PATH, newConfig, 0o600);
+    writeJsonAtomic(CONFIG_PATH, newConfig, 0o600, { durable: true });
     config = attachAllowlistResolution(newConfig, newConfig._allowlistResolution || loadAllowlistResolution());
     return true;
   } catch (err) {

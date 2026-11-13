@@ -8,6 +8,7 @@ import { outboundDenialReason, outboundDecision, findLoggedMessage, realConversa
 
 const owner = { bound: true, aadObjectId: 'aad-owner', name: 'Owner' };
 const ref = (conversationType, user = { aadObjectId: 'aad-owner', name: 'Owner' }) => ({ conversation: { conversationType }, user });
+const RECENT = new Date().toISOString();
 const deps = (r = null, logged = {}) => ({
   ref: r,
   findMessage: (_c, id) => logged[id] || null,
@@ -92,11 +93,41 @@ describe('outbound group/channel policy', () => {
     expect(outboundDenialReason(cfg, { conversationId: '19:x', type: 'group' }, deps(G))).toMatch(/not allowed/);
   });
   it('unlisted channel: reply to accepted owner message allowed, reply-only', () => {
-    expect(outboundDecision(cfg, { conversationId: '19:x;messageid=1', type: 'channel', msg: 'm1' }, deps(C, { m1: { user_id: 'aad-owner' } })))
+    expect(outboundDecision(cfg, { conversationId: '19:x;messageid=1', type: 'channel', msg: 'm1' }, deps(C, { m1: { user_id: 'aad-owner', timestamp: RECENT } })))
       .toEqual({ reason: null, replyOnly: true });
   });
-  it('unlisted group chat: no owner-reply exception (Teams has no reply threading there)', () => {
-    expect(outboundDenialReason(cfg, { conversationId: '19:x', type: 'group', msg: 'm1' }, deps(G, { m1: { user_id: 'aad-owner' } }))).toMatch(/not allowed/);
+
+  describe('unlisted group chat: owner-reply exception (normal post, 7-day window)', () => {
+    const NOW = Date.parse('2026-11-13T00:00:00Z');
+    // Log keyed by conversation, like findLoggedMessage (one file per chat).
+    const logs = {
+      '19:x': { m1: { user_id: 'aad-owner', timestamp: '2026-11-12T00:00:00Z' }, m2: { user_id: 'u', timestamp: '2026-11-12T00:00:00Z' }, old: { user_id: 'aad-owner', timestamp: '2026-11-05T23:59:59Z' } },
+      '19:y': { my: { user_id: 'aad-owner', timestamp: '2026-11-12T00:00:00Z' } },
+    };
+    const gdeps = { ref: G, findMessage: (c, id) => logs[c]?.[id] || null, now: () => NOW };
+    const send = (c, msg, config = cfg) => outboundDecision(config, { conversationId: c, type: 'group', msg }, gdeps);
+
+    it('reply to owner message: allowed as a normal post (no replyOnly)', () => {
+      expect(send('19:x', 'm1')).toEqual({ reason: null });
+    });
+    it('reply to non-owner message: denied', () => {
+      expect(send('19:x', 'm2').reason).toMatch(/not allowed/);
+    });
+    it('owner message older than 7 days: denied', () => {
+      expect(send('19:x', 'old').reason).toMatch(/not allowed/);
+    });
+    it('owner message id from another group: denied', () => {
+      expect(send('19:x', 'my').reason).toMatch(/not allowed/);
+    });
+    it('proactive (no msg:): denied', () => {
+      expect(send('19:x', undefined).reason).toMatch(/not allowed/);
+    });
+    it('groupPolicy=disabled: denied', () => {
+      expect(send('19:x', 'm1', { ...cfg, groupPolicy: 'disabled' }).reason).toMatch(/not allowed/);
+    });
+    it('record without timestamp is not proof', () => {
+      expect(outboundDecision(cfg, { conversationId: '19:x', type: 'group', msg: 'm1' }, deps(G, { m1: { user_id: 'aad-owner' } })).reason).toMatch(/not allowed/);
+    });
   });
   it('unlisted: reply to logged non-owner message denied', () => {
     expect(outboundDenialReason(cfg, { conversationId: '19:x', type: 'channel', msg: 'm1' }, deps(C, { m1: { user_id: 'u' } }))).not.toBeNull();

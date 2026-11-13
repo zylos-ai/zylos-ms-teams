@@ -156,13 +156,16 @@ stored type is blocked.
   (owner first; `dmPolicy: disabled` blocks all).
 - **Group chat / channel:** allowed when inbound access allows the
   conversation. `groupPolicy: disabled` blocks all, as inbound does.
-- **Owner-reply exception (channels only):** in a channel not otherwise
-  allowed, a text/card reply to an accepted owner message in that post
-  (`msg:` in the endpoint, proven by an `accepted` record in the component's
-  inbound log) is allowed. Every chunk is sent as a threaded reply to that
-  message (even with `replyStyle: new`), never as a plain post; media is
-  refused. Group chats have no reply threading in Teams, so there is no
-  exception there.
+- **Owner-reply exception:** in a group chat or channel not otherwise
+  allowed (inbound still accepts the owner there), a reply to an accepted
+  owner message in that same conversation from the last 7 days (`msg:` in the
+  endpoint, proven by an `accepted` record in the component's inbound log) is
+  allowed. Proactive sends (no `msg:`), replies to non-owner or older
+  messages, and anything under `groupPolicy: disabled` are blocked.
+  - **Channel:** every chunk is sent as a threaded reply to that message
+    (even with `replyStyle: new`), never as a plain post; media is refused.
+  - **Group chat:** Teams has no reply threads there, so the reply is a
+    normal post.
 - Blocked sends exit 1 with `outbound blocked`; nothing is sent.
 
 ## Media Messages
