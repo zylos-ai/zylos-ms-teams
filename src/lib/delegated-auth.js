@@ -27,7 +27,7 @@ function loadTokens() {
 
 function saveTokens() {
   try {
-    writeJsonAtomic(TOKENS_FILE, tokens, 0o600);
+    writeJsonAtomic(TOKENS_FILE, tokens, 0o600, { durable: true });
     try { tokensMtimeMs = fs.statSync(TOKENS_FILE).mtimeMs; } catch {}
   } catch (err) {
     console.error(`[ms-teams/delegated-auth] Failed to save tokens: ${err.message}`);

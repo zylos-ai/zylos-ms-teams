@@ -1,10 +1,10 @@
 import { escapeXml } from './format.js';
-import { logEntry, ensureReplay } from './context.js';
+import { logEntry, ensureReplay, historyKey } from './context.js';
 
 const chatHistories = new Map();
 
 export function recordHistoryEntry(chatId, entry, config) {
-  const key = String(chatId).split(';')[0];
+  const key = historyKey(chatId);
   if (!chatHistories.has(key)) chatHistories.set(key, []);
   const history = chatHistories.get(key);
 
@@ -37,7 +37,7 @@ export function recordHistoryEntry(chatId, entry, config) {
 }
 
 export function getInMemoryContext(chatId, currentMessageId, limit) {
-  const key = String(chatId).split(';')[0];
+  const key = historyKey(chatId);
   const history = chatHistories.get(key);
   if (!history || history.length === 0) return [];
 
