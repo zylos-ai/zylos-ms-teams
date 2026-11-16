@@ -34,6 +34,26 @@ export function buildEndpoint(conversationId, { type, aadObjectId, activityId } 
   return endpoint;
 }
 
+/**
+ * Conversation id of a channel post (one post thread = one session group and
+ * one history): the post's root message id, or its own id for a top-level
+ * post — the same `<channel>;messageid=<root>` Bot Framework reports.
+ */
+export function channelPostConversationId(channelId, messageId, rootMessageId) {
+  return `${channelId};messageid=${rootMessageId || messageId}`;
+}
+
+/**
+ * Conversation reference to store for an activity, always carrying the
+ * conversationType Teams reported (the outbound policy's source of truth for
+ * DM vs group/channel).
+ */
+export function referenceWithConversationType(convRef, activity) {
+  const conversationType = activity?.conversation?.conversationType;
+  if (!conversationType || convRef?.conversation?.conversationType === conversationType) return convRef;
+  return { ...convRef, conversation: { ...(convRef?.conversation || activity.conversation), conversationType } };
+}
+
 export function parseC4Response(stdout) {
   if (!stdout) return null;
   try {

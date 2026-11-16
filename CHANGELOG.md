@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+### Added
+- Session groups for multi-session zylos-core: `dm-` / `group-` / `channel-`
+  + the Teams conversation id (each channel post separately), `admin` for DM
+  pairing notices. Ids are escaped reversibly; names over 95 characters use a
+  short id stored in `session-groups.json`. `--session-group` is passed only
+  when Core lists it in `c4-receive-options.json`.
+- `scripts/session-group.js <endpoint>` prints the group (exit 1, no output,
+  for unknown or invalid endpoints).
+- Outbound destination policy in `send.js`, keyed on the real stored
+  conversation type (endpoint `type:` must match; unknown denied): DMs only to
+  recipients the inbound DM policy accepts; group chats/channels only when
+  allowed inbound, else replies to accepted owner messages in that
+  conversation from the last 7 days (channels: threaded text replies only;
+  group chats: normal posts). Blocked sends exit 1.
+- Short-id store writes a durable `.bak` first, recovers a missing or corrupt
+  main file from a valid `.bak` (corrupt file kept as `.corrupt-<ts>`), fails
+  closed when neither is usable, and never reuses an id after loss.
+- `writeJsonAtomic` fsyncs only with `{ durable: true }` (session groups,
+  config, tokens); hot-path caches no longer block on fsync.
+- Smart-mode channel top-level posts get their own group
+  (`<channel>;messageid=<post>`), shared with their replies.
+- c4-receive is retried only on spawn failure; uncertain outcomes are not
+  retried.
+
+### Changed
+- Channel posts keep their own history: the context block, the replay log
+  file and recorded bot replies are keyed by `<channel>;messageid=<post>`, so a
+  post no longer sees other posts' messages (matches the per-post session
+  group). Other conversations are unchanged.
+- c4-receive rejections follow `error.persisted`; Core's error text is no
+  longer shown to Teams users. The 35s c4-receive kill timeout is removed.
+
 ## [0.1.9] - 2026-09-28
 
 ### Fixed
